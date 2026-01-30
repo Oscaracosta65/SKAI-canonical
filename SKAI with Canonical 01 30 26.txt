@@ -42,12 +42,10 @@ $doc = Factory::getDocument();
 // Includes all query parameters as they represent different content/games
 try {
     $uri = Uri::getInstance();
-    if ($uri) {
-        $canonicalUrl = $uri->toString();
-        // Ensure HTTPS for canonical URL to match security policy
-        $canonicalUrl = preg_replace('/^http:/', 'https:', $canonicalUrl);
-        $doc->addHeadLink($canonicalUrl, 'canonical');
-    }
+    // Ensure HTTPS for canonical URL to match security policy
+    $uri->setScheme('https');
+    $canonicalUrl = $uri->toString();
+    $doc->addHeadLink($canonicalUrl, 'canonical');
 } catch (\Throwable $e) {
     // Canonical URL is optional - continue if it fails
 }
