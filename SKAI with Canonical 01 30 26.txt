@@ -25,7 +25,7 @@
 defined('_JEXEC') or die;
 
 use Joomla\CMS\Factory;
-
+use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\Database\ParameterType;
@@ -37,6 +37,18 @@ $in  = $app->getInput();
 
 /* Register SKAI assets into the real <head> (non-blocking) */
 $doc = Factory::getDocument();
+
+// Set canonical URL for SEO (Google picks up this as the authoritative URL)
+// Includes all query parameters as they represent different content/games
+try {
+    $uri = Uri::getInstance();
+    // Ensure HTTPS for canonical URL to match security policy
+    $uri->setScheme('https');
+    $canonicalUrl = $uri->toString();
+    $doc->addHeadLink($canonicalUrl, 'canonical');
+} catch (\Throwable $e) {
+    // Canonical URL is optional - continue if it fails
+}
 
 // Only register CSS/JS if the physical files exist, to avoid 404s on missing assets.
 $skaiCssPath = JPATH_ROOT . '/media/com_lottoexpert/css/skai-consolidated.css';
@@ -11579,11 +11591,11 @@ function SKAI_requireProgress(){
       }
       
       if (this.batchesProcessed > 0) {
-        lines.push('Batches processed: ' + this._formatNumber(this.batchesProcessed));
+        lines.push('Batches processed: ' + this._formatNumber(this.batchesProcessed) + ' (like reading chapters in a book, one at a time)');
       }
       
       if (this.totalOperations > 0) {
-        lines.push('Total computations: ' + this._formatNumber(this.totalOperations));
+        lines.push('Total computations: ' + this._formatNumber(this.totalOperations) + ' (number crunching to find the best predictions)');
       }
       
       container.innerHTML = lines.map(function(line) {
@@ -11606,10 +11618,10 @@ function SKAI_requireProgress(){
         
         var details = [];
         if (p.processed > 0) {
-          details.push('Analyzed ' + this._formatNumber(p.processed) + ' data points');
+          details.push('Analyzed ' + this._formatNumber(p.processed) + ' data points (looked at past winning numbers to learn from them)');
         }
         if (p.relationships > 0) {
-          details.push('Evaluated ' + this._formatNumber(p.relationships) + ' relationships');
+          details.push('Evaluated ' + this._formatNumber(p.relationships) + ' relationships (checked how numbers appear together)');
         }
         if (p.change) {
           details.push(p.change);
@@ -20893,10 +20905,10 @@ if (live0) live0.textContent = 'Nothing to copy yet - run AI first.';
         // === LAYER 1: Set training phase ===
         try {
           if (window.SKAI_RUNTIME_STATS) {
-            window.SKAI_RUNTIME_STATS.setPhase('Training neural network', phaseLabel);
+            window.SKAI_RUNTIME_STATS.setPhase('Training neural network (teaching the computer to predict numbers)', phaseLabel);
           }
         } catch(_) {}
-        return Promise.resolve(); 
+        return Promise.resolve();
       },
       onEpochEnd: function(epoch, logs){
         if (epoch === lastEpoch) return Promise.resolve();
@@ -20925,7 +20937,7 @@ if (live0) live0.textContent = 'Nothing to copy yet - run AI first.';
             // Update phase detail with epoch info
             var eff = epochOffset + (epoch + 1);
             var tot = Math.max(1, totalDisplay);
-            window.SKAI_RUNTIME_STATS.setPhase('Training neural network', phaseLabel + ' (' + eff + '/' + tot + ' epochs)');
+            window.SKAI_RUNTIME_STATS.setPhase('Training neural network (teaching the computer to predict numbers)', phaseLabel + ' (' + eff + '/' + tot + ' epochs)');
           }
         } catch(_) {}
 
@@ -21056,9 +21068,9 @@ if (live0) live0.textContent = 'Nothing to copy yet - run AI first.';
             var totalBatches = window.SKAI_RUNTIME_STATS.batchesProcessed;
             var loss = (history && history.history && history.history.loss) ? history.history.loss[history.history.loss.length - 1] : null;
             
-            var changeText = 'Model trained for ' + totalEpochsCompleted + ' epochs';
+            var changeText = 'Model trained for ' + totalEpochsCompleted + ' epochs (went through all the data ' + totalEpochsCompleted + ' times to get better at predicting)';
             if (loss !== null && isFinite(loss)) {
-              changeText += ', final loss: ' + loss.toFixed(4);
+              changeText += ', final loss: ' + loss.toFixed(4) + ' (accuracy score - lower numbers mean better predictions)';
             }
             
             window.SKAI_RUNTIME_STATS.completePhase({
@@ -30712,11 +30724,7 @@ function rankByProb(probTable, currentSkips, K){
       if (i >= W.length) return finalize();
 
       var wi = W[i]|0;
-      try {
-        var raw = ((i + 1) / W.length) * 100;
-        var pct = Math.min(99, Math.max(0, Math.floor(raw)));
-        emitAutotuneProgress(pct, { window: wi, W: wi, index: i+1, total: W.length, loss:null });
-      } catch(_){}
+      // Progress will be emitted after backtest completes with actual loss value
 
       return backtestWindow(draws, wi, { laplaceK: lapK }).then(function(bt){
 
@@ -30756,6 +30764,15 @@ function rankByProb(probTable, currentSkips, K){
               }
             }));
           }
+        } catch(_){}
+
+        // Update progress with actual loss value after backtest completes
+        try {
+          var raw = ((i + 1) / W.length) * 100;
+          var pct = Math.min(99, Math.max(0, Math.floor(raw)));
+          // Use negative avgScore as loss (higher score = lower loss)
+          var loss = (bt && bt.avgScore != null && isFinite(bt.avgScore)) ? -bt.avgScore : null;
+          emitAutotuneProgress(pct, { window: wi, W: wi, index: i+1, total: W.length, loss: loss });
         } catch(_){}
 
         if (bt.avgScore > best.score) best = { score: bt.avgScore, w: wi, metric: bt };
