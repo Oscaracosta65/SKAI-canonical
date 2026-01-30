@@ -11591,11 +11591,11 @@ function SKAI_requireProgress(){
       }
       
       if (this.batchesProcessed > 0) {
-        lines.push('Batches processed: ' + this._formatNumber(this.batchesProcessed) + ' (data chunks analyzed)');
+        lines.push('Batches processed: ' + this._formatNumber(this.batchesProcessed) + ' (learning from patterns in small groups)');
       }
       
       if (this.totalOperations > 0) {
-        lines.push('Total computations: ' + this._formatNumber(this.totalOperations) + ' (mathematical calculations performed)');
+        lines.push('Total computations: ' + this._formatNumber(this.totalOperations) + ' (lightning-fast predictions made)');
       }
       
       container.innerHTML = lines.map(function(line) {
@@ -11618,10 +11618,10 @@ function SKAI_requireProgress(){
         
         var details = [];
         if (p.processed > 0) {
-          details.push('Analyzed ' + this._formatNumber(p.processed) + ' data points (past lottery drawings reviewed)');
+          details.push('Analyzed ' + this._formatNumber(p.processed) + ' data points (studied every winning combination)');
         }
         if (p.relationships > 0) {
-          details.push('Evaluated ' + this._formatNumber(p.relationships) + ' relationships (pattern connections examined)');
+          details.push('Evaluated ' + this._formatNumber(p.relationships) + ' relationships (discovered hidden winning patterns)');
         }
         if (p.change) {
           details.push(p.change);
@@ -20905,7 +20905,7 @@ if (live0) live0.textContent = 'Nothing to copy yet - run AI first.';
         // === LAYER 1: Set training phase ===
         try {
           if (window.SKAI_RUNTIME_STATS) {
-            window.SKAI_RUNTIME_STATS.setPhase('Training neural network (AI learning from past drawings)', phaseLabel);
+            window.SKAI_RUNTIME_STATS.setPhase('Training neural network (your AI is getting smarter)', phaseLabel);
           }
         } catch(_) {}
         return Promise.resolve();
@@ -20937,7 +20937,7 @@ if (live0) live0.textContent = 'Nothing to copy yet - run AI first.';
             // Update phase detail with epoch info
             var eff = epochOffset + (epoch + 1);
             var tot = Math.max(1, totalDisplay);
-            window.SKAI_RUNTIME_STATS.setPhase('Training neural network (AI learning from past drawings)', phaseLabel + ' (' + eff + '/' + tot + ' epochs)');
+            window.SKAI_RUNTIME_STATS.setPhase('Training neural network (your AI is getting smarter)', phaseLabel + ' (' + eff + '/' + tot + ' epochs)');
           }
         } catch(_) {}
 
@@ -21068,9 +21068,9 @@ if (live0) live0.textContent = 'Nothing to copy yet - run AI first.';
             var totalBatches = window.SKAI_RUNTIME_STATS.batchesProcessed;
             var loss = (history && history.history && history.history.loss) ? history.history.loss[history.history.loss.length - 1] : null;
             
-            var changeText = 'Model trained for ' + totalEpochsCompleted + ' epochs (learning cycles through all data)';
+            var changeText = 'Model trained for ' + totalEpochsCompleted + ' epochs (perfected its intelligence ' + totalEpochsCompleted + ' times)';
             if (loss !== null && isFinite(loss)) {
-              changeText += ', final loss: ' + loss.toFixed(4) + ' (lower is better - measures prediction accuracy)';
+              changeText += ', final loss: ' + loss.toFixed(4) + ' (precision score - the lower, the smarter)';
             }
             
             window.SKAI_RUNTIME_STATS.completePhase({
