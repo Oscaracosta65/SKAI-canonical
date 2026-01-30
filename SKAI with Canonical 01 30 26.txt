@@ -39,8 +39,18 @@ $in  = $app->getInput();
 $doc = Factory::getDocument();
 
 // Set canonical URL for SEO (Google picks up this as the authoritative URL)
-$canonicalUrl = Uri::getInstance()->toString();
-$doc->addHeadLink($canonicalUrl, 'canonical');
+// Includes all query parameters as they represent different content/games
+try {
+    $uri = Uri::getInstance();
+    if ($uri) {
+        $canonicalUrl = $uri->toString();
+        // Ensure HTTPS for canonical URL to match security policy
+        $canonicalUrl = preg_replace('/^http:/', 'https:', $canonicalUrl);
+        $doc->addHeadLink($canonicalUrl, 'canonical');
+    }
+} catch (\Throwable $e) {
+    // Canonical URL is optional - continue if it fails
+}
 
 // Only register CSS/JS if the physical files exist, to avoid 404s on missing assets.
 $skaiCssPath = JPATH_ROOT . '/media/com_lottoexpert/css/skai-consolidated.css';
