@@ -25,7 +25,7 @@
 defined('_JEXEC') or die;
 
 use Joomla\CMS\Factory;
-
+use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\Database\ParameterType;
@@ -37,6 +37,10 @@ $in  = $app->getInput();
 
 /* Register SKAI assets into the real <head> (non-blocking) */
 $doc = Factory::getDocument();
+
+// Set canonical URL for SEO (Google picks up this as the authoritative URL)
+$canonicalUrl = Uri::getInstance()->toString();
+$doc->addHeadLink($canonicalUrl, 'canonical');
 
 // Only register CSS/JS if the physical files exist, to avoid 404s on missing assets.
 $skaiCssPath = JPATH_ROOT . '/media/com_lottoexpert/css/skai-consolidated.css';
