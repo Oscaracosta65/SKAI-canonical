@@ -3420,6 +3420,52 @@ $labelInput = implode(' - ', $parts);
             }
         }
 
+        // NEW: Read explicit mode component keys
+        $skaiModePrimary = $in->getString('skai_mode_primary', null);
+        if ($skaiModePrimary !== null) {
+            $skaiModePrimary = trim(strtolower((string)$skaiModePrimary));
+            if (!in_array($skaiModePrimary, ['balanced', 'explorative', 'conservative'], true)) {
+                $skaiModePrimary = null;
+            }
+        }
+        $skaiModeMethod = $in->getString('skai_mode_method', null);
+        if ($skaiModeMethod !== null) {
+            $skaiModeMethod = trim(strtolower((string)$skaiModeMethod));
+            if (!in_array($skaiModeMethod, ['ai', 'hybrid', 'skip'], true)) {
+                $skaiModeMethod = null;
+            }
+        }
+        $skaiModeRisk = $in->getString('skai_mode_risk', null);
+        if ($skaiModeRisk !== null) {
+            $skaiModeRisk = trim(strtolower((string)$skaiModeRisk));
+            if (!in_array($skaiModeRisk, ['balanced', 'explorative', 'conservative'], true)) {
+                $skaiModeRisk = null;
+            }
+        }
+
+        // Build server-side combined display string (overrides client-sent value to prevent spoofing)
+        $finalRunModeDisplay = 'hybrid'; // fallback
+        if ($skaiModePrimary && $skaiModeMethod) {
+            // Map enums to Title Case labels
+            $primaryLabels = [
+                'balanced' => 'Balanced',
+                'explorative' => 'Explorative',
+                'conservative' => 'Conservative',
+            ];
+            $methodLabels = [
+                'ai' => 'AI-Forward',
+                'hybrid' => 'Balanced Mix',
+                'skip' => 'Skip Pattern',
+            ];
+            $primaryLabel = $primaryLabels[$skaiModePrimary] ?? 'Balanced';
+            $methodLabel = $methodLabels[$skaiModeMethod] ?? 'Balanced Mix';
+            
+            // Format: "<Primary> - <Method>"
+            $finalRunModeDisplay = $primaryLabel . ' - ' . $methodLabel;
+        }
+        // Override the skai_run_mode with server-built value
+        $skaiRunMode = $finalRunModeDisplay;
+
         // CHG: Read Pick3/Pick4/Daily game specific parameters
         $pickLength = $in->getInt('pick_length', null);
         $allowZero = $in->getInt('allow_zero', 0);
@@ -3559,6 +3605,12 @@ $skaiSettings = [
     'profile'      => $riskProfile ?? 'balanced',
     'strategy'     => $strategy ?? 'hybrid',
     'summary'      => $settingsSummary ?? null,
+    
+    // NEW: Explicit mode components for better tracking
+    'skai_mode_primary' => $skaiModePrimary ?? ($riskProfile ?? 'balanced'),
+    'skai_mode_method'  => $skaiModeMethod ?? ($strategy ?? 'hybrid'),
+    'skai_mode_risk'    => $skaiModeRisk ?? ($riskProfile ?? 'balanced'),
+    'skai_run_mode'     => $finalRunModeDisplay,
     
     'auto_tune'    => isset($autoTune) ? (int)$autoTune : null,
     'skip_window'  => ($skipWindow > 0) ? (int)$skipWindow : null,
@@ -11873,6 +11925,11 @@ Selected: Profile = Balanced - Strategy = Hybrid - Blend = Skip 45% / AI 55% (Hy
           <!-- User selection: risk profile + strategy -->
           <input type="hidden" name="risk_profile" id="skai-ai-risk-profile" value="" />
           <input type="hidden" name="strategy" id="skai-ai-strategy" value="" />
+          
+          <!-- Explicit mode component keys for better tracking -->
+          <input type="hidden" name="skai_mode_primary" id="skai-ai-mode-primary" value="" />
+          <input type="hidden" name="skai_mode_method" id="skai-ai-mode-method" value="" />
+          <input type="hidden" name="skai_mode_risk" id="skai-ai-mode-risk" value="" />
 
           <!-- NN / AI hyperparameters (mirrors working AI page columns) -->
           <input type="hidden" name="epochs" id="skai-ai-epochs" value="" />
@@ -21886,17 +21943,6 @@ function fmt(v){
         }
       }
 
-      // Get mode and top N values from DOM or globals if available
-      if (fldRunMode) {
-        fldRunMode.value = 'hybrid'; // default SKAI mode
-      }
-      if (fldTopNNumbers && mainNumbers && mainNumbers.length > 0) {
-        fldTopNNumbers.value = String(mainNumbers.length);
-      }
-      if (fldTopNCombos) {
-        fldTopNCombos.value = '20'; // default top combos
-      }
-
       // Populate risk_profile and strategy from current UI selection
       var profileBtn, profileVal, profileLabel, strategyBtn, strategyVal, strategyLabel;
       try {
@@ -21908,15 +21954,36 @@ function fmt(v){
 
         strategyBtn = document.querySelector('#skai-strategy-buttons .btn-chip[aria-pressed="true"]');
         strategyVal = strategyBtn ? (strategyBtn.getAttribute('data-strategy') || 'hybrid') : 'hybrid';
-        var strategyMap = { 'ai': 'AI-Forward', 'hybrid': 'Hybrid', 'skip': 'Skip Pattern' };
-        strategyLabel = strategyMap[strategyVal] || 'Hybrid';
+        var strategyMap = { 'ai': 'AI-Forward', 'hybrid': 'Balanced Mix', 'skip': 'Skip Pattern' };
+        strategyLabel = strategyMap[strategyVal] || 'Balanced Mix';
         var strategyEl = document.getElementById('skai-ai-strategy');
         if (strategyEl) strategyEl.value = strategyVal;
       } catch(_) {
         profileVal = 'balanced';
         profileLabel = 'Balanced';
         strategyVal = 'hybrid';
-        strategyLabel = 'Hybrid';
+        strategyLabel = 'Balanced Mix';
+      }
+
+      // Populate explicit mode component fields
+      var fldModePrimary = document.getElementById('skai-ai-mode-primary');
+      var fldModeMethod = document.getElementById('skai-ai-mode-method');
+      var fldModeRisk = document.getElementById('skai-ai-mode-risk');
+      if (fldModePrimary) fldModePrimary.value = profileVal;
+      if (fldModeMethod) fldModeMethod.value = strategyVal;
+      if (fldModeRisk) fldModeRisk.value = profileVal; // risk mirrors profile for now
+
+      // Build combined human-readable run mode string: "Profile - Strategy"
+      var combinedRunMode = profileLabel + ' - ' + strategyLabel;
+      if (fldRunMode) {
+        fldRunMode.value = combinedRunMode;
+      }
+
+      if (fldTopNNumbers && mainNumbers && mainNumbers.length > 0) {
+        fldTopNNumbers.value = String(mainNumbers.length);
+      }
+      if (fldTopNCombos) {
+        fldTopNCombos.value = '20'; // default top combos
       }
 
       // Populate auto-tune and skip window parameters
