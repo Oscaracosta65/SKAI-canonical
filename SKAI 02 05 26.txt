@@ -27964,13 +27964,14 @@ try {
       sub.style.marginTop = '10px';
       sub.style.color = '#0A1A33';
       sub.style.fontWeight = '700';
-      sub.textContent = 'High-probability combinations (relative rank)';
+      sub.style.fontSize = '14px';
+      sub.textContent = 'High Probability Combinations';
       panel.appendChild(sub);
 
       var ul = document.createElement('div');
       ul.style.marginTop = '6px';
 
-      for (var c = 0; c < Math.min(6, combos.length); c++){
+      for (var c = 0; c < Math.min(12, combos.length); c++){
         var it = combos[c];
         var line2 = document.createElement('div');
         line2.style.display = 'flex';
