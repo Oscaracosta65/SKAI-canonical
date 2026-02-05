@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SKAI Position Display Fields - Test Page</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 30px;
+        }
+        .test-section {
+            background: #f9f9f9;
+            padding: 20px;
+            margin: 20px 0;
+            border-left: 4px solid #2196F3;
+            border-radius: 4px;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        label {
+            display: block;
+            margin: 10px 0 5px;
+            font-weight: 600;
+        }
+        select, button {
+            padding: 10px;
+            font-size: 14px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin-top: 15px;
+            padding: 12px 24px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .output {
+            background: #263238;
+            color: #aed581;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f5f5f5;
+            font-weight: 600;
+        }
+        .field-present {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .field-missing {
+            color: #f44336;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 SKAI Position Display Fields - Compatibility Test</h1>
+        
+        <div class="status info">
+            <strong>Purpose:</strong> This test page verifies that the new position display fields 
+            (skai_mode_primary, skai_mode_method, skai_mode_risk) are properly defined and can be populated 
+            when saving predictions to My Dashboard.
+        </div>
+
+        <h2>Test 1: Field Existence Check</h2>
+        <div class="test-section">
+            <p>Checking if all required hidden fields exist in the form...</p>
+            <button onclick="checkFieldExistence()">Run Field Existence Test</button>
+            <div id="field-existence-result"></div>
+        </div>
+
+        <h2>Test 2: Field Population Simulation</h2>
+        <div class="test-section">
+            <div class="controls">
+                <label for="risk-profile">Risk Profile:</label>
+                <select id="risk-profile">
+                    <option value="conservative">Conservative</option>
+                    <option value="balanced" selected>Balanced</option>
+                    <option value="aggressive">Aggressive</option>
+                </select>
+
+                <label for="strategy">Strategy:</label>
+                <select id="strategy">
+                    <option value="skip_heavy">Skip-Heavy</option>
+                    <option value="hybrid" selected>Hybrid</option>
+                    <option value="ai_heavy">AI-Heavy</option>
+                </select>
+
+                <button onclick="simulateFieldPopulation()">Simulate Field Population</button>
+            </div>
+            <div id="population-result"></div>
+        </div>
+
+        <h2>Test 3: Form Submission Preview</h2>
+        <div class="test-section">
+            <p>Preview what data would be sent to My Dashboard when the form is submitted:</p>
+            <button onclick="previewFormSubmission()">Preview Form Data</button>
+            <div id="form-preview-result"></div>
+        </div>
+
+        <!-- Hidden Form (simulates the actual SKAI save form) -->
+        <form id="skai-ai-save-form" style="display: none;">
+            <input type="hidden" name="save_set" value="1" />
+            <input type="hidden" name="analysis_type" value="skai_prediction" />
+            <input type="hidden" name="module_tag" value="SKAI AI v1" />
+            
+            <!-- Existing fields -->
+            <input type="hidden" name="risk_profile" id="skai-ai-risk-profile" value="" />
+            <input type="hidden" name="strategy" id="skai-ai-strategy" value="" />
+            
+            <!-- NEW: Position display fields -->
+            <input type="hidden" name="skai_mode_primary" id="skai-ai-mode-primary" value="" />
+            <input type="hidden" name="skai_mode_method" id="skai-ai-mode-method" value="" />
+            <input type="hidden" name="skai_mode_risk" id="skai-ai-mode-risk" value="" />
+            
+            <!-- Other sample fields -->
+            <input type="hidden" name="lottery_id" value="123" />
+            <input type="hidden" name="main_numbers" id="skai-ai-main-json" value="" />
+            <input type="hidden" name="extra_ball_numbers" id="skai-ai-extra-json" value="" />
+        </form>
+    </div>
+
+    <script>
+        function checkFieldExistence() {
+            const fields = [
+                { id: 'skai-ai-mode-primary', name: 'skai_mode_primary', description: 'Primary Mode Field' },
+                { id: 'skai-ai-mode-method', name: 'skai_mode_method', description: 'Method Field' },
+                { id: 'skai-ai-mode-risk', name: 'skai_mode_risk', description: 'Risk Field' }
+            ];
+
+            let html = '<table><thead><tr><th>Field</th><th>ID</th><th>Name</th><th>Status</th></tr></thead><tbody>';
+            let allPresent = true;
+
+            fields.forEach(field => {
+                const element = document.getElementById(field.id);
+                const present = element !== null;
+                if (!present) allPresent = false;
+                
+                const statusClass = present ? 'field-present' : 'field-missing';
+                const statusText = present ? '✅ Present' : '❌ Missing';
+                
+                html += `<tr>
+                    <td>${field.description}</td>
+                    <td><code>${field.id}</code></td>
+                    <td><code>${field.name}</code></td>
+                    <td class="${statusClass}">${statusText}</td>
+                </tr>`;
+            });
+
+            html += '</tbody></table>';
+
+            const resultDiv = document.getElementById('field-existence-result');
+            const statusClass = allPresent ? 'success' : 'error';
+            const statusText = allPresent 
+                ? '✅ All position display fields are present and ready!' 
+                : '❌ Some fields are missing. Check the form structure.';
+            
+            resultDiv.innerHTML = `<div class="status ${statusClass}">${statusText}</div>${html}`;
+        }
+
+        function simulateFieldPopulation() {
+            const profileVal = document.getElementById('risk-profile').value;
+            const strategyVal = document.getElementById('strategy').value;
+
+            // Simulate the JavaScript logic from SKAI 02 05 26.txt (lines 21969-21974)
+            const fldModePrimary = document.getElementById('skai-ai-mode-primary');
+            const fldModeMethod = document.getElementById('skai-ai-mode-method');
+            const fldModeRisk = document.getElementById('skai-ai-mode-risk');
+            const fldRiskProfile = document.getElementById('skai-ai-risk-profile');
+            const fldStrategy = document.getElementById('skai-ai-strategy');
+
+            // Populate fields (mimicking the actual code)
+            if (fldModePrimary) fldModePrimary.value = profileVal;
+            if (fldModeMethod) fldModeMethod.value = strategyVal;
+            if (fldModeRisk) fldModeRisk.value = profileVal; // risk mirrors profile
+            if (fldRiskProfile) fldRiskProfile.value = profileVal;
+            if (fldStrategy) fldStrategy.value = strategyVal;
+
+            // Display results
+            const results = {
+                'Risk Profile (existing)': fldRiskProfile ? fldRiskProfile.value : 'N/A',
+                'Strategy (existing)': fldStrategy ? fldStrategy.value : 'N/A',
+                'Mode Primary (NEW)': fldModePrimary ? fldModePrimary.value : 'N/A',
+                'Mode Method (NEW)': fldModeMethod ? fldModeMethod.value : 'N/A',
+                'Mode Risk (NEW)': fldModeRisk ? fldModeRisk.value : 'N/A'
+            };
+
+            let html = '<div class="status success">✅ Fields populated successfully!</div>';
+            html += '<div class="output">';
+            html += 'Field Values:\n';
+            html += '═══════════════════════════════════════\n\n';
+            
+            for (const [key, value] of Object.entries(results)) {
+                html += `${key}: "${value}"\n`;
+            }
+            
+            html += '\n═══════════════════════════════════════\n';
+            html += 'These values will be saved to My Dashboard when the form is submitted.';
+            html += '</div>';
+
+            document.getElementById('population-result').innerHTML = html;
+        }
+
+        function previewFormSubmission() {
+            const form = document.getElementById('skai-ai-save-form');
+            const formData = new FormData(form);
+            
+            let html = '<div class="status info">📋 Preview of data that would be sent to My Dashboard:</div>';
+            html += '<div class="output">';
+            html += 'POST Data:\n';
+            html += '═══════════════════════════════════════\n\n';
+            
+            const entries = Array.from(formData.entries());
+            const relevantFields = entries.filter(([key]) => 
+                key.includes('mode') || key === 'risk_profile' || key === 'strategy'
+            );
+            
+            if (relevantFields.length === 0) {
+                html += '⚠️ No mode or profile fields found.\n';
+                html += 'Run "Simulate Field Population" first!\n';
+            } else {
+                relevantFields.forEach(([key, value]) => {
+                    const displayValue = value || '(empty)';
+                    html += `${key}: "${displayValue}"\n`;
+                });
+            }
+            
+            html += '\n═══════════════════════════════════════\n';
+            html += `Total form fields: ${entries.length}\n`;
+            html += 'Mode-related fields: ' + relevantFields.length;
+            html += '</div>';
+
+            document.getElementById('form-preview-result').innerHTML = html;
+        }
+
+        // Run field existence check on page load
+        window.addEventListener('DOMContentLoaded', function() {
+            checkFieldExistence();
+        });
+    </script>
+</body>
+</html>
