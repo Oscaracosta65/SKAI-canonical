@@ -26355,6 +26355,18 @@ try {
 
   // allowZero already exists in this function later; we can infer digit game defensively:
   var isDigitGame = (domainMain > 0 && domainMain <= 9);
+  
+  // Debug logging for position combo generation
+  if (window.console && window.console.log) {
+    console.log('[SKAI Position Combos Generation Debug]', {
+      domainMain: domainMain,
+      pickMain: pickMain,
+      isDigitGame: isDigitGame,
+      hasRawDraws: Array.isArray(rawDraws),
+      rawDrawsLength: rawDraws ? rawDraws.length : 0,
+      condition: isDigitGame && pickMain >= 2 && pickMain <= 6 && Array.isArray(rawDraws) && rawDraws.length >= 10
+    });
+  }
 
   if (isDigitGame && pickMain >= 2 && pickMain <= 6 && Array.isArray(rawDraws) && rawDraws.length >= 10) {
 
@@ -26610,14 +26622,30 @@ try {
     window.SKAI_POS_BLEND  = posBlend;
     window.SKAI_POS_TOPS   = tops;
     window.SKAI_POS_COMBOS = combos;
+    
+    // Debug: Confirm data was published
+    if (window.console && window.console.log) {
+      console.log('[SKAI Position Combos] Published to window', {
+        topsLength: tops.length,
+        combosLength: combos.length
+      });
+    }
   } else {
     // Clear if not a digit game
     window.SKAI_POS_BLEND  = null;
     window.SKAI_POS_TOPS   = null;
     window.SKAI_POS_COMBOS = null;
+    
+    // Debug: Data cleared (not a digit game or conditions not met)
+    if (window.console && window.console.log) {
+      console.log('[SKAI Position Combos] Cleared (not a digit game or conditions not met)');
+    }
   }
 } catch(_posErr) {
-  // fail silent - never block main rendering
+  // Log errors instead of silently swallowing
+  if (window.console && window.console.error) {
+    console.error('[SKAI Position Combos Generation Error]', _posErr);
+  }
 }
 
     // CHG: Thompson Sampling posterior arrays (optional)
