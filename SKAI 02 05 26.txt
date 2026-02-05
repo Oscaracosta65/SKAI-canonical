@@ -3150,6 +3150,17 @@ try {
                 $evidenceJson = json_encode($tmp, JSON_UNESCAPED_SLASHES);
             }
         }
+        
+        // CHG: Extract High Probability Combinations for clear dashboard display
+        // For digit games (Pick 3/Pick 4), extract position_combos from evidence
+        $positionCombosJson = null;
+        if ($evidenceJson !== '') {
+            $evidenceTmp = json_decode($evidenceJson, true);
+            if (json_last_error() === JSON_ERROR_NONE && isset($evidenceTmp['position_combos']) && is_array($evidenceTmp['position_combos'])) {
+                // Extract combinations with their metadata (main numbers, score, percentage)
+                $positionCombosJson = json_encode($evidenceTmp['position_combos'], JSON_UNESCAPED_SLASHES);
+            }
+        }
 
         // --- Auto-label if empty: "Country ? State ? Lottery ? Mon D, YYYY"
         $labelInput = strip_tags($labelInput); // safety
@@ -3671,6 +3682,11 @@ $row = (object) [
     'settings_json'       => $skaiSettingsJson,
 
     'top_combos_json'     => $evidenceJson, // may be NULL if malformed earlier
+    
+    // CHG: Persist High Probability Combinations separately for easy dashboard access
+    // For digit games (Pick 3/Pick 4), this contains the ranked position-based combinations
+    'position_combinations' => $positionCombosJson,
+    
     'date_saved'          => $nowSql,
     'generated_at'        => $nowSql,
     'draws_analyzed'      => ($drawsAnalyzed > 0) ? (int)$drawsAnalyzed : null,
@@ -3802,6 +3818,7 @@ $row = (object) [
                 'main_numbers',
                 'extra_ball_numbers',
                 'top_combos_json',
+                'position_combinations',
                 'matched_numbers',
                 'digit_probabilities',
                 'hidden_layers'
