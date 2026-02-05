@@ -27886,6 +27886,20 @@ try {
   var isDigitGame = (domainMain > 0 && domainMain <= 9);
   var tops = window.SKAI_POS_TOPS;
   var combos = window.SKAI_POS_COMBOS;
+  
+  // Debug logging
+  if (window.console && window.console.log) {
+    console.log('[SKAI Position Panel Debug]', {
+      domainMain: domainMain,
+      pickMain: pickMain,
+      isDigitGame: isDigitGame,
+      hasTops: Array.isArray(tops),
+      topsLength: tops ? tops.length : 0,
+      hasCombos: Array.isArray(combos),
+      combosLength: combos ? combos.length : 0,
+      condition: isDigitGame && pickMain >= 2 && pickMain <= 4 && Array.isArray(tops) && tops.length === pickMain
+    });
+  }
 
   if (isDigitGame && pickMain >= 2 && pickMain <= 4 && Array.isArray(tops) && tops.length === pickMain) {
 
@@ -28005,8 +28019,18 @@ try {
     }
 
     container.appendChild(panel);
+    
+    // Debug: Confirm panel was appended
+    if (window.console && window.console.log) {
+      console.log('[SKAI Position Panel] Successfully appended to container');
+    }
   }
-} catch(_posUIErr){}
+} catch(_posUIErr){
+  // Log errors instead of silently swallowing them
+  if (window.console && window.console.error) {
+    console.error('[SKAI Position Panel Error]', _posUIErr);
+  }
+}
 
         }
 
