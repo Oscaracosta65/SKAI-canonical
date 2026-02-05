@@ -26677,6 +26677,12 @@ try {
 
     allowZero   = !!meta.allowZero && !meta.hasExtraBall;
     L           = Math.max(probs.length, priorMain.length || 0);
+    
+    // CHG: For digit games (Pick 3/Pick 4/Daily), limit L to 10 (digits 0-9 only)
+    var domainMain = (meta && isFinite(+meta.domain) && +meta.domain > 0) ? (+meta.domain|0) : 0;
+    if (domainMain > 0 && domainMain <= 9) {
+      L = Math.min(L, 10);
+    }
 
     // Tail design for gate/ridge
     var V     = Math.max(30, Math.min(200, Math.floor(0.15 * n)));
@@ -26886,6 +26892,12 @@ try {
     ? (L | 0)
     : Math.max((probs && probs.length) ? probs.length : 0,
                (priorMain && priorMain.length) ? priorMain.length : 0);
+  
+  // CHG: For digit games (Pick 3/Pick 4/Daily), limit Lsafe to 10 (digits 0-9 only)
+  var domainMainBlend = (meta && isFinite(+meta.domain) && +meta.domain > 0) ? (+meta.domain|0) : 0;
+  if (domainMainBlend > 0 && domainMainBlend <= 9) {
+    Lsafe = Math.min(Lsafe, 10);
+  }
 
   for (var i0=0; i0<Lsafe; i0++){
     var num   = allowZero ? i0 : (i0 + 1);
