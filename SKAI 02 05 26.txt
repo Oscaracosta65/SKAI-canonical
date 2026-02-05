@@ -12604,6 +12604,16 @@ function buildPayload(){
       knobs: { bt_windows: btWindows, laplace_k: laplaceK, cooc_k: coK },
       picks: { main: mainTop, extra: extraTop }
     };
+    
+    // CHG: For digit games, include position combos in evidence
+    try {
+      var _meta = window.SKAI_META || {};
+      var _domain = (_meta && isFinite(+_meta.domain) && +_meta.domain > 0) ? (+_meta.domain|0) : 0;
+      var _pick = (_meta && isFinite(+_meta.pick) && +_meta.pick > 0) ? (+_meta.pick|0) : 0;
+      if (_domain > 0 && _domain <= 9 && _pick >= 2 && _pick <= 4 && window.SKAI_POS_COMBOS && window.SKAI_POS_COMBOS.length) {
+        evidence.position_combos = window.SKAI_POS_COMBOS.slice(0, 12);
+      }
+    } catch(_) {}
 
     var nj = qs('skai-numbers-json'), tj = qs('skai-top-combos-json');
     if (!nj || !tj) return {ok:false, msg:'Form inputs missing.'};
@@ -27010,6 +27020,25 @@ try {
       // FIX: Set skaiSaveMainOrdered for database save in probability order
       // This ensures predictions are saved highest-to-lowest confidence, not sorted numerically
       window.skaiSaveMainOrdered = lastPicks.slice();
+      
+      // CHG: For digit games (Pick 3/Pick 4/Daily), save the top combination instead of 20 individual digits
+      try {
+        var _metaDigit = window.SKAI_META || {};
+        var _domainDigit = (_metaDigit && isFinite(+_metaDigit.domain) && +_metaDigit.domain > 0) ? (+_metaDigit.domain|0) : 0;
+        var _pickDigit = (_metaDigit && isFinite(+_metaDigit.pick) && +_metaDigit.pick > 0) ? (+_metaDigit.pick|0) : 0;
+        var _isDigitGame = (_domainDigit > 0 && _domainDigit <= 9);
+        
+        if (_isDigitGame && _pickDigit >= 2 && _pickDigit <= 4 && window.SKAI_POS_COMBOS && window.SKAI_POS_COMBOS.length) {
+          // Use the top combination from SKAI_POS_COMBOS (highest probability)
+          var _topCombo = window.SKAI_POS_COMBOS[0];
+          if (_topCombo && Array.isArray(_topCombo.main) && _topCombo.main.length === _pickDigit) {
+            // Replace skaiSaveMainOrdered with just the top combination
+            window.skaiSaveMainOrdered = _topCombo.main.slice();
+          }
+        }
+      } catch(_digitErr) {
+        // Fail silently - keep default behavior if error
+      }
 
       // NEW: Build canonical final ticket combos (ensures full pickSize is represented)
       // Note: combo builder is optional and only runs when called.
