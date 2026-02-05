@@ -27938,6 +27938,9 @@ try {
     panel.style.borderRadius = '12px';
     panel.style.background = 'linear-gradient(180deg, #EFEFF5 0%, #FFFFFF 100%)';
     panel.style.border = '1px solid rgba(10,26,51,0.08)';
+    panel.style.display = 'block';
+    panel.style.visibility = 'visible';
+    panel.style.opacity = '1';
 
     var title = document.createElement('div');
     title.style.fontWeight = '700';
@@ -28047,6 +28050,16 @@ try {
     }
 
     container.appendChild(panel);
+    
+    // Scroll panel into view to ensure it's visible
+    try {
+      if (typeof panel.scrollIntoView === 'function') {
+        // Use smooth scroll with a slight delay to ensure DOM is settled
+        setTimeout(function() {
+          panel.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        }, 100);
+      }
+    } catch(_scrollErr) {}
     
     // Debug: Confirm panel was appended
     if (window.console && window.console.log) {
