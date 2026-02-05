@@ -79,7 +79,7 @@ for field_id in "${FIELDS[@]}"; do
         
         # Check if value is being assigned
         field_var=$(echo "$field_id" | sed 's/-ai-/-/g' | sed 's/-\([a-z]\)/\U\1/g')
-        if grep -q "\.value = " "$FILE" | grep -q "$field_id"; then
+        if grep "$field_id" "$FILE" | grep -q "\.value = "; then
             echo -e "   ${GREEN}✓ Value assignment present${NC}"
         fi
     else
@@ -104,7 +104,9 @@ all_logic_found=true
 for check in "${population_checks[@]}"; do
     # Check if the population logic exists (allowing for variations)
     pattern=$(echo "$check" | sed 's/\./\\./g' | sed 's/ = .*//')
-    if grep -q "$pattern" "$FILE" && grep "$pattern" "$FILE" | grep -q "\.value"; then
+    # Store grep result to avoid reading file twice
+    grep_result=$(grep "$pattern" "$FILE")
+    if echo "$grep_result" | grep -q "\.value"; then
         echo -e "${GREEN}✅ Population logic: $check${NC}"
     else
         echo -e "${RED}❌ Population logic missing: $check${NC}"
