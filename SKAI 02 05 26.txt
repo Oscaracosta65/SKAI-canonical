@@ -3743,6 +3743,9 @@ $row = (object) [
 
     // CHG: Persist digit probabilities for Pick3/Pick4/Daily games
     'digit_probabilities' => !empty($digitProbsJson) ? $digitProbsJson : null,
+    
+    // CHG: Persist comprehensive settings (includes digit_probabilities and position_combinations)
+    'comprehensive_settings' => !empty($comprehensiveSettingsJson) ? $comprehensiveSettingsJson : null,
 ];
 
         // Normalize: convert empty strings to NULL to avoid '' in nullable columns
@@ -3804,6 +3807,7 @@ $row = (object) [
                 'top_combos_json',
                 'matched_numbers',
                 'digit_probabilities',
+                'comprehensive_settings',
                 'hidden_layers'
             ];
             foreach ($jsonFields as $jf) {
@@ -22111,6 +22115,11 @@ function fmt(v){
             digitProbsField.value = JSON.stringify(window.SKAI_DIGIT_PROBS);
           }
           comprehensiveSettings.digit_probabilities = window.SKAI_DIGIT_PROBS;
+        }
+        
+        // CHG: Capture position combinations for Pick3/Pick4/Daily games
+        if (window.SKAI_POS_COMBOS) {
+          comprehensiveSettings.position_combinations = window.SKAI_POS_COMBOS;
         }
       }
 
