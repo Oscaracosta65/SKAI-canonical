@@ -3150,6 +3150,17 @@ try {
                 $evidenceJson = json_encode($tmp, JSON_UNESCAPED_SLASHES);
             }
         }
+        
+        // CHG: Extract High Probability Combinations for clear dashboard display
+        // For digit games (Pick 3/Pick 4), extract position_combos from evidence
+        $positionCombosJson = null;
+        if ($evidenceJson !== '') {
+            $evidenceTmp = json_decode($evidenceJson, true);
+            if (json_last_error() === JSON_ERROR_NONE && isset($evidenceTmp['position_combos']) && is_array($evidenceTmp['position_combos'])) {
+                // Extract combinations with their metadata (main numbers, score, percentage)
+                $positionCombosJson = json_encode($evidenceTmp['position_combos'], JSON_UNESCAPED_SLASHES);
+            }
+        }
 
         // --- Auto-label if empty: "Country ? State ? Lottery ? Mon D, YYYY"
         $labelInput = strip_tags($labelInput); // safety
@@ -3671,6 +3682,11 @@ $row = (object) [
     'settings_json'       => $skaiSettingsJson,
 
     'top_combos_json'     => $evidenceJson, // may be NULL if malformed earlier
+    
+    // CHG: Persist High Probability Combinations separately for easy dashboard access
+    // For digit games (Pick 3/Pick 4), this contains the ranked position-based combinations
+    'position_combinations' => $positionCombosJson,
+    
     'date_saved'          => $nowSql,
     'generated_at'        => $nowSql,
     'draws_analyzed'      => ($drawsAnalyzed > 0) ? (int)$drawsAnalyzed : null,
@@ -3802,6 +3818,7 @@ $row = (object) [
                 'main_numbers',
                 'extra_ball_numbers',
                 'top_combos_json',
+                'position_combinations',
                 'matched_numbers',
                 'digit_probabilities',
                 'hidden_layers'
@@ -12604,6 +12621,16 @@ function buildPayload(){
       knobs: { bt_windows: btWindows, laplace_k: laplaceK, cooc_k: coK },
       picks: { main: mainTop, extra: extraTop }
     };
+    
+    // CHG: For digit games, include position combos in evidence
+    try {
+      var _meta = window.SKAI_META || {};
+      var _domain = (_meta && isFinite(+_meta.domain) && +_meta.domain > 0) ? (+_meta.domain|0) : 0;
+      var _pick = (_meta && isFinite(+_meta.pick) && +_meta.pick > 0) ? (+_meta.pick|0) : 0;
+      if (_domain > 0 && _domain <= 9 && _pick >= 2 && _pick <= 4 && window.SKAI_POS_COMBOS && window.SKAI_POS_COMBOS.length) {
+        evidence.position_combos = window.SKAI_POS_COMBOS.slice(0, 12);
+      }
+    } catch(_) {}
 
     var nj = qs('skai-numbers-json'), tj = qs('skai-top-combos-json');
     if (!nj || !tj) return {ok:false, msg:'Form inputs missing.'};
@@ -26345,6 +26372,18 @@ try {
 
   // allowZero already exists in this function later; we can infer digit game defensively:
   var isDigitGame = (domainMain > 0 && domainMain <= 9);
+  
+  // Debug logging for position combo generation
+  if (window.console && window.console.log) {
+    console.log('[SKAI Position Combos Generation Debug]', {
+      domainMain: domainMain,
+      pickMain: pickMain,
+      isDigitGame: isDigitGame,
+      hasRawDraws: Array.isArray(rawDraws),
+      rawDrawsLength: rawDraws ? rawDraws.length : 0,
+      condition: isDigitGame && pickMain >= 2 && pickMain <= 6 && Array.isArray(rawDraws) && rawDraws.length >= 10
+    });
+  }
 
   if (isDigitGame && pickMain >= 2 && pickMain <= 6 && Array.isArray(rawDraws) && rawDraws.length >= 10) {
 
@@ -26600,14 +26639,30 @@ try {
     window.SKAI_POS_BLEND  = posBlend;
     window.SKAI_POS_TOPS   = tops;
     window.SKAI_POS_COMBOS = combos;
+    
+    // Debug: Confirm data was published
+    if (window.console && window.console.log) {
+      console.log('[SKAI Position Combos] Published to window', {
+        topsLength: tops.length,
+        combosLength: combos.length
+      });
+    }
   } else {
     // Clear if not a digit game
     window.SKAI_POS_BLEND  = null;
     window.SKAI_POS_TOPS   = null;
     window.SKAI_POS_COMBOS = null;
+    
+    // Debug: Data cleared (not a digit game or conditions not met)
+    if (window.console && window.console.log) {
+      console.log('[SKAI Position Combos] Cleared (not a digit game or conditions not met)');
+    }
   }
 } catch(_posErr) {
-  // fail silent - never block main rendering
+  // Log errors instead of silently swallowing
+  if (window.console && window.console.error) {
+    console.error('[SKAI Position Combos Generation Error]', _posErr);
+  }
 }
 
     // CHG: Thompson Sampling posterior arrays (optional)
@@ -26677,6 +26732,12 @@ try {
 
     allowZero   = !!meta.allowZero && !meta.hasExtraBall;
     L           = Math.max(probs.length, priorMain.length || 0);
+    
+    // CHG: For digit games (Pick 3/Pick 4/Daily), limit L to 10 (digits 0-9 only)
+    var domainMain = (meta && isFinite(+meta.domain) && +meta.domain > 0) ? (+meta.domain|0) : 0;
+    if (domainMain > 0 && domainMain <= 9) {
+      L = Math.min(L, 10);
+    }
 
     // Tail design for gate/ridge
     var V     = Math.max(30, Math.min(200, Math.floor(0.15 * n)));
@@ -26886,6 +26947,12 @@ try {
     ? (L | 0)
     : Math.max((probs && probs.length) ? probs.length : 0,
                (priorMain && priorMain.length) ? priorMain.length : 0);
+  
+  // CHG: For digit games (Pick 3/Pick 4/Daily), limit Lsafe to 10 (digits 0-9 only)
+  var domainMainBlend = (meta && isFinite(+meta.domain) && +meta.domain > 0) ? (+meta.domain|0) : 0;
+  if (domainMainBlend > 0 && domainMainBlend <= 9) {
+    Lsafe = Math.min(Lsafe, 10);
+  }
 
   for (var i0=0; i0<Lsafe; i0++){
     var num   = allowZero ? i0 : (i0 + 1);
@@ -26998,6 +27065,25 @@ try {
       // FIX: Set skaiSaveMainOrdered for database save in probability order
       // This ensures predictions are saved highest-to-lowest confidence, not sorted numerically
       window.skaiSaveMainOrdered = lastPicks.slice();
+      
+      // CHG: For digit games (Pick 3/Pick 4/Daily), save the top combination instead of 20 individual digits
+      try {
+        var _metaDigit = window.SKAI_META || {};
+        var _domainDigit = (_metaDigit && isFinite(+_metaDigit.domain) && +_metaDigit.domain > 0) ? (+_metaDigit.domain|0) : 0;
+        var _pickDigit = (_metaDigit && isFinite(+_metaDigit.pick) && +_metaDigit.pick > 0) ? (+_metaDigit.pick|0) : 0;
+        var _isDigitGame = (_domainDigit > 0 && _domainDigit <= 9);
+        
+        if (_isDigitGame && _pickDigit >= 2 && _pickDigit <= 4 && window.SKAI_POS_COMBOS && window.SKAI_POS_COMBOS.length) {
+          // Use the top combination from SKAI_POS_COMBOS (highest probability)
+          var _topCombo = window.SKAI_POS_COMBOS[0];
+          if (_topCombo && Array.isArray(_topCombo.main) && _topCombo.main.length === _pickDigit) {
+            // Replace skaiSaveMainOrdered with just the top combination
+            window.skaiSaveMainOrdered = _topCombo.main.slice();
+          }
+        }
+      } catch(_digitErr) {
+        // Fail silently - keep default behavior if error
+      }
 
       // NEW: Build canonical final ticket combos (ensures full pickSize is represented)
       // Note: combo builder is optional and only runs when called.
@@ -27845,6 +27931,20 @@ try {
   var isDigitGame = (domainMain > 0 && domainMain <= 9);
   var tops = window.SKAI_POS_TOPS;
   var combos = window.SKAI_POS_COMBOS;
+  
+  // Debug logging
+  if (window.console && window.console.log) {
+    console.log('[SKAI Position Panel Debug]', {
+      domainMain: domainMain,
+      pickMain: pickMain,
+      isDigitGame: isDigitGame,
+      hasTops: Array.isArray(tops),
+      topsLength: tops ? tops.length : 0,
+      hasCombos: Array.isArray(combos),
+      combosLength: combos ? combos.length : 0,
+      condition: isDigitGame && pickMain >= 2 && pickMain <= 4 && Array.isArray(tops) && tops.length === pickMain
+    });
+  }
 
   if (isDigitGame && pickMain >= 2 && pickMain <= 4 && Array.isArray(tops) && tops.length === pickMain) {
 
@@ -27855,6 +27955,9 @@ try {
     panel.style.borderRadius = '12px';
     panel.style.background = 'linear-gradient(180deg, #EFEFF5 0%, #FFFFFF 100%)';
     panel.style.border = '1px solid rgba(10,26,51,0.08)';
+    panel.style.display = 'block';
+    panel.style.visibility = 'visible';
+    panel.style.opacity = '1';
 
     var title = document.createElement('div');
     title.style.fontWeight = '700';
@@ -27923,13 +28026,14 @@ try {
       sub.style.marginTop = '10px';
       sub.style.color = '#0A1A33';
       sub.style.fontWeight = '700';
-      sub.textContent = 'High-probability combinations (relative rank)';
+      sub.style.fontSize = '14px';
+      sub.textContent = 'High Probability Combinations';
       panel.appendChild(sub);
 
       var ul = document.createElement('div');
       ul.style.marginTop = '6px';
 
-      for (var c = 0; c < Math.min(6, combos.length); c++){
+      for (var c = 0; c < Math.min(12, combos.length); c++){
         var it = combos[c];
         var line2 = document.createElement('div');
         line2.style.display = 'flex';
@@ -27963,8 +28067,28 @@ try {
     }
 
     container.appendChild(panel);
+    
+    // Scroll panel into view to ensure it's visible
+    try {
+      if (typeof panel.scrollIntoView === 'function') {
+        // Use smooth scroll with a slight delay to ensure DOM is settled
+        setTimeout(function() {
+          panel.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        }, 100);
+      }
+    } catch(_scrollErr) {}
+    
+    // Debug: Confirm panel was appended
+    if (window.console && window.console.log) {
+      console.log('[SKAI Position Panel] Successfully appended to container');
+    }
   }
-} catch(_posUIErr){}
+} catch(_posUIErr){
+  // Log errors instead of silently swallowing them
+  if (window.console && window.console.error) {
+    console.error('[SKAI Position Panel Error]', _posUIErr);
+  }
+}
 
         }
 
