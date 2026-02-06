@@ -12069,7 +12069,7 @@ Selected: Profile = Balanced - Strategy = Hybrid - Blend = Skip 45% / AI 55% (Hy
       <span class="opt-hint">Get the same results every time</span>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-      <input type="checkbox" id="deterministic" name="deterministic" value="1" style="width:auto;margin:0" aria-describedby="skai-repro-explain">
+      <input type="checkbox" id="deterministic" name="deterministic" value="1" checked style="width:auto;margin:0" aria-describedby="skai-repro-explain">
       <label for="deterministic" style="margin:0;font-weight:normal;cursor:pointer">Enable consistent results</label>
     </div>
     <p class="opt-help-line" id="skai-repro-explain">
@@ -12080,7 +12080,7 @@ Selected: Profile = Balanced - Strategy = Hybrid - Blend = Skip 45% / AI 55% (Hy
     </p>
 
     <!-- Reproducibility Key (conditional, shown when deterministic is enabled) -->
-    <div id="reprokey_container" style="display:none;margin-top:10px">
+    <div id="reprokey_container" style="display:block;margin-top:10px">
       <label for="reproKey" style="font-weight:600;margin-bottom:4px;display:block">
         Reproducibility Key <span style="font-size:0.85em;color:#6b7280;font-weight:normal">(Advanced - controls repeatability &amp; variants)</span>
       </label>
