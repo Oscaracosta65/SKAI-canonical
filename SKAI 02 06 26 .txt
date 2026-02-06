@@ -12049,6 +12049,34 @@ Selected: Profile = Balanced - Strategy = Hybrid - Blend = Skip 45% / AI 55% (Hy
 </div>
 
 
+  <!-- Deterministic Mode (Reproducibility) -->
+  <div class="opt-card" role="group" aria-labelledby="skai-deterministic-title" style="margin-top:8px">
+    <div id="skai-deterministic-title" class="opt-title">
+      Reproducible Predictions
+      <span class="opt-hint">Get the same results every time</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <input type="checkbox" id="deterministic" name="deterministic" value="1" style="width:auto;margin:0">
+      <label for="deterministic" style="margin:0;font-weight:normal;cursor:pointer">Enable deterministic mode</label>
+    </div>
+    <p class="opt-help-line">
+      When enabled, SKAI uses a fixed random seed to ensure predictions are 100% reproducible. 
+      Same settings → same predictions every time. Useful for testing, validation, and comparing different strategies.
+    </p>
+
+    <!-- Seed (conditional, shown when deterministic is enabled) -->
+    <div id="seed_container" style="display:none;margin-top:10px">
+      <label for="seed" style="font-weight:600;margin-bottom:4px;display:block">Random Seed (optional)</label>
+      <input type="number" id="seed" name="seed" min="1" max="2147483647" placeholder="Auto-generated from settings" 
+             style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:14px">
+      <p class="opt-help-line" style="margin-top:4px;font-size:0.9em">
+        Optional: specify a custom seed number. If left blank, SKAI will generate a stable seed from your settings.
+        Use the same seed to reproduce exact predictions.
+      </p>
+    </div>
+  </div>
+
+
 <!-- ===== Confidence - Recommendation (World-class UX micro-explainer) ===== -->
 <div id="skai-confidence-explainer" class="tile" style="margin:10px 0 14px 0;display:none">
   <div class="panel-header">What SKAI sees right now</div>
@@ -12146,32 +12174,6 @@ Selected: Profile = Balanced - Strategy = Hybrid - Blend = Skip 45% / AI 55% (Hy
     <input type="number" id="skaiadv_layers_num" min="1" max="12" value="6">
   </div>
   <div class="help">How deep SKAI&rsquo;s neural network is. More layers allow SKAI to capture more complex relationships between numbers, but too many can latch onto noise.</div>
-
-  <!-- Deterministic Mode (NEW) -->
-  <label for="deterministic">
-    Deterministic Mode
-    <span style="color:#6366f1;font-size:0.85em;font-weight:600">(NEW)</span>
-  </label>
-  <div class="range-row" style="display:flex;align-items:center;gap:10px">
-    <input type="checkbox" id="deterministic" name="deterministic" value="1" style="width:auto;margin:0">
-    <label for="deterministic" style="margin:0;font-weight:normal">Enable reproducible predictions</label>
-  </div>
-  <div class="help">
-    When enabled, SKAI uses a fixed random seed to ensure predictions are 100% reproducible. 
-    Same settings → same predictions every time. Useful for testing and validation.
-  </div>
-
-  <!-- Seed (conditional, shown when deterministic is enabled) -->
-  <div id="seed_container" style="display:none;margin-top:10px">
-    <label for="seed">Random Seed (optional)</label>
-    <div class="range-row">
-      <input type="number" id="seed" name="seed" min="1" max="2147483647" placeholder="Auto-generated" style="width:100%">
-    </div>
-    <div class="help">
-      Optional: specify a custom seed number. If left blank, SKAI will generate a stable seed from your settings.
-      Use the same seed to reproduce exact predictions.
-    </div>
-  </div>
 
 
   <!-- Activation -->
