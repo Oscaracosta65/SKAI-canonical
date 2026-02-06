@@ -504,9 +504,11 @@ if (isset($_GET['install_eval']) && $_GET['install_eval'] == '1') {
  * @param array  $params         Parameters used: weights, window, etc.
  * @param string $drawDate       Target draw date (YYYY-MM-DD) or null
  * @param array  $extrasRanked   Extra ball predictions (optional)
+ * @param bool   $deterministic  Whether consistent results mode was used
+ * @param int    $reproKey       Reproducibility key (backward compatible with seed)
  * @return int|false             Inserted log ID or false on failure
  */
-function SKAI_logPredictionRun($gameId, $rankedList, $top20Nums, $params, $drawDate = null, $extrasRanked = [], $deterministic = false, $seed = null) {
+function SKAI_logPredictionRun($gameId, $rankedList, $top20Nums, $params, $drawDate = null, $extrasRanked = [], $deterministic = false, $reproKey = null) {
     try {
         $db = Factory::getDbo();
         $query = $db->getQuery(true);
@@ -574,7 +576,7 @@ function SKAI_logPredictionRun($gameId, $rankedList, $top20Nums, $params, $drawD
             $db->quote(implode(',', $top20Nums)),
             !empty($extrasRanked) ? $db->quote(json_encode($extrasRanked, JSON_UNESCAPED_UNICODE)) : 'NULL',
             $deterministic ? '1' : '0',
-            $seed !== null ? (int)$seed : 'NULL',
+            $reproKey !== null ? (int)$reproKey : 'NULL',  // Store as seed column for DB compatibility
             $db->quote($now->toSql())
         ];
         
@@ -2516,15 +2518,18 @@ function SKAI_addPairwiseBonuses($candidates, $liftMap, $seedSize = 10, $topK = 
  * @param float $beta            Pairwise interaction strength (default 1.0)
  * @param array $constraints     Constraint weights: {sum_band, parity, gap}
  * @param int   $domain          Number domain max (e.g., 70)
- * @param bool  $deterministic   If true, use seeded randomness (default false)
- * @param int   $seed            Seed for deterministic mode (optional)
+ * @param bool  $deterministic   If true, use reproducibility key for consistency (default false)
+ * @param int   $reproKey        Reproducibility key for consistent results (optional, backward compatible with $seed)
  * @return array                 Marginal probabilities: {num => prob}
  */
-function SKAI_gibbsSampling($candidates, $liftMap, $setSize, $numIterations = 1000, $beta = 1.0, $constraints = [], $domain = 70, $deterministic = false, $seed = null) {
+function SKAI_gibbsSampling($candidates, $liftMap, $setSize, $numIterations = 1000, $beta = 1.0, $constraints = [], $domain = 70, $deterministic = false, $reproKey = null) {
     try {
-        // CHG: Initialize seeded RNG if deterministic mode is enabled
-        if ($deterministic && $seed !== null) {
-            mt_srand($seed);
+        // Reproducibility Key — NOT random prediction
+        // SKAI is score-driven (AI + analytics produce scores).
+        // The key is used only to make runs repeatable and to resolve near-ties consistently.
+        // Same settings + same key => same picks. Different key => different variant (still score-driven).
+        if ($deterministic && $reproKey !== null) {
+            mt_srand($reproKey);
         }
         
         // Initialize with top K by calibrated score
@@ -2550,7 +2555,7 @@ function SKAI_gibbsSampling($candidates, $liftMap, $setSize, $numIterations = 10
         // MCMC sampling
         for ($iter = 0; $iter < $numIterations; $iter++) {
             // Propose a swap: remove one, add another
-            // CHG: Use deterministic selection if enabled
+            // Use deterministic selection if enabled (resolves ties consistently)
             if ($deterministic) {
                 $removeIdx = array_keys($currentSet)[mt_rand(0, count($currentSet) - 1)];
             } else {
@@ -12049,29 +12054,34 @@ Selected: Profile = Balanced - Strategy = Hybrid - Blend = Skip 45% / AI 55% (Hy
 </div>
 
 
-  <!-- Deterministic Mode (Reproducibility) -->
-  <div class="opt-card" role="group" aria-labelledby="skai-deterministic-title" style="margin-top:8px">
+  <!-- Reproducible Predictions (Score-Driven, Not Random) -->
+  <div class="opt-card" role="group" aria-labelledby="skai-deterministic-title" aria-describedby="skai-repro-explain" style="margin-top:8px">
     <div id="skai-deterministic-title" class="opt-title">
       Reproducible Predictions
       <span class="opt-hint">Get the same results every time</span>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-      <input type="checkbox" id="deterministic" name="deterministic" value="1" style="width:auto;margin:0">
-      <label for="deterministic" style="margin:0;font-weight:normal;cursor:pointer">Enable deterministic mode</label>
+      <input type="checkbox" id="deterministic" name="deterministic" value="1" style="width:auto;margin:0" aria-describedby="skai-repro-explain">
+      <label for="deterministic" style="margin:0;font-weight:normal;cursor:pointer">Enable consistent results</label>
     </div>
-    <p class="opt-help-line">
-      When enabled, SKAI uses a fixed random seed to ensure predictions are 100% reproducible. 
-      Same settings → same predictions every time. Useful for testing, validation, and comparing different strategies.
+    <p class="opt-help-line" id="skai-repro-explain">
+      <strong>SKAI is score-driven:</strong> it ranks numbers using AI + historical analysis.
+      The Reproducibility Key does <strong>NOT generate random numbers</strong>.
+      It only makes results repeatable and selects a consistent variant when candidates score similarly.
+      Same settings + same key → same picks. Different key → different variant, still score-driven.
     </p>
 
-    <!-- Seed (conditional, shown when deterministic is enabled) -->
-    <div id="seed_container" style="display:none;margin-top:10px">
-      <label for="seed" style="font-weight:600;margin-bottom:4px;display:block">Random Seed (optional)</label>
-      <input type="number" id="seed" name="seed" min="1" max="2147483647" placeholder="Auto-generated from settings" 
-             style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:14px">
-      <p class="opt-help-line" style="margin-top:4px;font-size:0.9em">
-        Optional: specify a custom seed number. If left blank, SKAI will generate a stable seed from your settings.
-        Use the same seed to reproduce exact predictions.
+    <!-- Reproducibility Key (conditional, shown when deterministic is enabled) -->
+    <div id="reprokey_container" style="display:none;margin-top:10px">
+      <label for="reproKey" style="font-weight:600;margin-bottom:4px;display:block">
+        Reproducibility Key <span style="font-size:0.85em;color:#6b7280;font-weight:normal">(Advanced - controls repeatability &amp; variants)</span>
+      </label>
+      <input type="number" id="reproKey" name="reproKey" min="1" max="2147483647" placeholder="Auto-generated from settings" 
+             style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:14px"
+             aria-describedby="reprokey-help">
+      <p class="opt-help-line" id="reprokey-help" style="margin-top:4px;font-size:0.9em">
+        Optional: specify a custom key value. If left blank, SKAI will generate a stable key from your settings.
+        Use the same key to reproduce exact predictions. Changing the key produces a different variant (still score-driven).
       </p>
     </div>
   </div>
@@ -19123,19 +19133,22 @@ strat = strat || 'N/A';
     });
   }
 
-  // CHG: Wire deterministic checkbox to show/hide seed input
+  // Reproducibility Key — NOT random prediction
+  // SKAI is score-driven (AI + analytics produce scores).
+  // The key is used only to make runs repeatable and to resolve near-ties consistently.
+  // Same settings + same key => same picks. Different key => different variant (still score-driven).
   var detCheckbox = document.getElementById('deterministic');
-  var seedContainer = document.getElementById('seed_container');
-  if (detCheckbox && seedContainer && !detCheckbox.__skaiWired) {
+  var reproKeyContainer = document.getElementById('reprokey_container');
+  if (detCheckbox && reproKeyContainer && !detCheckbox.__skaiWired) {
     detCheckbox.__skaiWired = true;
     detCheckbox.addEventListener('change', function(){
       try { window.__SKAI_USER_ACTION__ = true; } catch(_){}
       if (detCheckbox.checked) {
-        seedContainer.style.display = 'block';
-        try { if (typeof setLive === 'function') setLive('Deterministic mode enabled - predictions will be reproducible'); } catch(_){}
+        reproKeyContainer.style.display = 'block';
+        try { if (typeof setLive === 'function') setLive('Consistent results enabled - predictions will be reproducible'); } catch(_){}
       } else {
-        seedContainer.style.display = 'none';
-        try { if (typeof setLive === 'function') setLive('Deterministic mode disabled'); } catch(_){}
+        reproKeyContainer.style.display = 'none';
+        try { if (typeof setLive === 'function') setLive('Consistent results disabled'); } catch(_){}
       }
     }, false);
   }
@@ -23510,10 +23523,13 @@ if (live0) live0.textContent = 'Nothing to copy yet - run AI first.';
   };
   
   /**
-   * Generate a stable seed from settings hash
-   * Uses a simple hash function to convert settings to a deterministic integer seed
+   * Generate a stable reproducibility key from settings hash
+   * Reproducibility Key — NOT random prediction
+   * SKAI is score-driven (AI + analytics produce scores).
+   * The key is used only to make runs repeatable and to resolve near-ties consistently.
+   * Same settings + same key => same picks. Different key => different variant (still score-driven).
    */
-  window.skaiGenerateSeed = function(lottery_id, gameId, pick, extra, windowSize, weights, mode) {
+  window.skaiGenerateReproKey = function(lottery_id, gameId, pick, extra, windowSize, weights, mode) {
     var str = [
       lottery_id || '',
       gameId || '',
@@ -23533,20 +23549,27 @@ if (live0) live0.textContent = 'Nothing to copy yet - run AI first.';
     return Math.abs(hash);
   };
   
+  // Backward compatibility alias (legacy)
+  window.skaiGenerateSeed = window.skaiGenerateReproKey;
+  
   /**
    * Deterministic state manager
-   * When deterministic mode is on, all random operations use seeded PRNG
+   * Reproducibility Key — NOT random prediction
+   * SKAI is score-driven (AI + analytics produce scores).
+   * The key is used only to make runs repeatable and to resolve near-ties consistently.
    */
   window.SKAI_DETERMINISTIC = {
     enabled: false,
-    seed: null,
+    reproKey: null,  // Primary name
+    seed: null,      // Legacy alias
     prng: null,
     
-    init: function(deterministic, seed) {
+    init: function(deterministic, reproKey) {
       this.enabled = !!deterministic;
-      this.seed = seed || null;
-      if (this.enabled && this.seed) {
-        this.prng = window.skaiMulberry32(this.seed);
+      this.reproKey = reproKey || null;
+      this.seed = this.reproKey; // Legacy alias
+      if (this.enabled && this.reproKey) {
+        this.prng = window.skaiMulberry32(this.reproKey);
       } else {
         this.prng = null;
       }
@@ -26454,7 +26477,10 @@ if (typeof window.runSkaiML !== 'function') { // singleton guard to avoid redefi
                      if (g > 1) g = 1;
                      return g;
                    })(),
-    // CHG: Deterministic mode control
+    // Reproducibility Key — NOT random prediction
+    // SKAI is score-driven (AI + analytics produce scores).
+    // The key is used only to make runs repeatable and to resolve near-ties consistently.
+    // Same settings + same key => same picks. Different key => different variant (still score-driven).
     deterministic: (function(){
                      var det = gv('deterministic', '');
                      // Check for boolean-like values
@@ -26462,13 +26488,31 @@ if (typeof window.runSkaiML !== 'function') { // singleton guard to avoid redefi
                      if (det === 'false' || det === '0' || det === 'no' || det === '') return false;
                      return !!det;
                    })(),
-    seed:         (function(){
-                     var s = gv('seed', '');
-                     if (s !== '') {
-                       var parsed = parseInt(s, 10);
+    consistentResults: (function(){
+                     var det = gv('deterministic', '');
+                     if (det === 'true' || det === '1' || det === 'yes') return true;
+                     if (det === 'false' || det === '0' || det === 'no' || det === '') return false;
+                     return !!det;
+                   })(),
+    reproKey:     (function(){
+                     // Accept both 'reproKey' and legacy 'seed' for backward compatibility
+                     var rk = gv('reproKey', '');
+                     if (rk === '') rk = gv('seed', ''); // Fallback to legacy parameter
+                     if (rk !== '') {
+                       var parsed = parseInt(rk, 10);
                        if (isFinite(parsed)) return parsed;
                      }
-                     return null; // Will be auto-generated if deterministic is true
+                     return null; // Will be auto-generated if consistentResults is true
+                   })(),
+    // Legacy alias for backward compatibility (internal use only)
+    seed:         (function(){
+                     var rk = gv('reproKey', '');
+                     if (rk === '') rk = gv('seed', '');
+                     if (rk !== '') {
+                       var parsed = parseInt(rk, 10);
+                       if (isFinite(parsed)) return parsed;
+                     }
+                     return null;
                    })(),
     // Default window = entire DB (hist-1), and clamp ONLY to the DB length (no arbitrary max caps)
     windowSize:   (function(){
@@ -27430,13 +27474,17 @@ try {
     // TS controls (defaults ON)
     var tsOn = (settings && settings.thompsonSampling != null) ? !!settings.thompsonSampling : true;
 
-    // CHG: Initialize deterministic PRNG if enabled
+    // Reproducibility Key — NOT random prediction
+    // SKAI is score-driven (AI + analytics produce scores).
+    // The key is used only to make runs repeatable and to resolve near-ties consistently.
+    // Same settings + same key => same picks. Different key => different variant (still score-driven).
     (function(){
       var deterministic = settings && settings.deterministic;
-      var seed = settings && settings.seed;
+      var consistentResults = settings && settings.consistentResults;
+      var reproKey = settings && (settings.reproKey || settings.seed); // Accept both
       
-      // If deterministic is on but no seed provided, generate one from settings hash
-      if (deterministic && !seed) {
+      // If consistent results are on but no key provided, generate one from settings hash
+      if ((deterministic || consistentResults) && !reproKey) {
         var cfg = window.SKAI_CONFIG || window.__le_gameConfig || window.lottoConfig || {};
         var lottery_id = cfg.lottery_id || cfg.gameId || '';
         var gameId = cfg.gameId || '';
@@ -27450,38 +27498,41 @@ try {
         };
         var mode = (settings && settings.mode) || '';
         
-        seed = window.skaiGenerateSeed(lottery_id, gameId, pick, extra, windowSize, weights, mode);
-        if (settings) settings.seed = seed; // Store generated seed
+        reproKey = window.skaiGenerateReproKey(lottery_id, gameId, pick, extra, windowSize, weights, mode);
+        if (settings) {
+          settings.reproKey = reproKey; // Store generated key
+          settings.seed = reproKey; // Legacy alias
+        }
       }
       
       // Initialize deterministic state
-      window.SKAI_DETERMINISTIC.init(deterministic, seed);
+      window.SKAI_DETERMINISTIC.init((deterministic || consistentResults), reproKey);
       
-      // Log for debugging
-      if (deterministic && window.console && window.console.log) {
-        console.log('[SKAI Deterministic] Enabled with seed:', seed);
+      // Log for debugging (internal only)
+      if ((deterministic || consistentResults) && window.console && window.console.log) {
+        console.log('[SKAI] Consistent results enabled with Reproducibility Key:', reproKey);
       }
     })();
 
     /**
-     * CHG: Reproducibility test function (callable from console)
+     * Reproducibility test function (callable from console)
      * Usage: window.SKAI_testReproducibility()
      * Returns: true if two runs produce identical results, false otherwise
      */
     window.SKAI_testReproducibility = function() {
       try {
         if (!window.SKAI_DETERMINISTIC || !window.SKAI_DETERMINISTIC.enabled) {
-          console.error('[SKAI Reproducibility Test] FAILED: Deterministic mode is not enabled');
+          console.error('[SKAI Reproducibility Test] FAILED: Consistent results mode is not enabled');
           return false;
         }
         
-        var seed = window.SKAI_DETERMINISTIC.seed;
-        if (!seed) {
-          console.error('[SKAI Reproducibility Test] FAILED: No seed found');
+        var reproKey = window.SKAI_DETERMINISTIC.reproKey;
+        if (!reproKey) {
+          console.error('[SKAI Reproducibility Test] FAILED: No Reproducibility Key found');
           return false;
         }
         
-        console.log('[SKAI Reproducibility Test] Running prediction twice with seed:', seed);
+        console.log('[SKAI Reproducibility Test] Running prediction twice with Reproducibility Key:', reproKey);
         
         // Store current blended results
         var run1 = window.SKAI_lastBlended ? JSON.parse(JSON.stringify(window.SKAI_lastBlended)) : null;
@@ -27491,8 +27542,8 @@ try {
           return false;
         }
         
-        // Re-initialize deterministic state with same seed
-        window.SKAI_DETERMINISTIC.init(true, seed);
+        // Re-initialize deterministic state with same key
+        window.SKAI_DETERMINISTIC.init(true, reproKey);
         
         // Trigger a new prediction by simulating the prediction process
         // Note: In real usage, user would click "Predict" button twice
@@ -27501,13 +27552,13 @@ try {
         var testSamples2 = [];
         
         // Sample from Beta distribution 10 times with same parameters
-        window.SKAI_DETERMINISTIC.init(true, seed);
+        window.SKAI_DETERMINISTIC.init(true, reproKey);
         for (var i = 0; i < 10; i++) {
           testSamples1.push(window.skaiSampleBeta(5, 5));
         }
         
-        // Re-seed and sample again
-        window.SKAI_DETERMINISTIC.init(true, seed);
+        // Re-initialize and sample again
+        window.SKAI_DETERMINISTIC.init(true, reproKey);
         for (var j = 0; j < 10; j++) {
           testSamples2.push(window.skaiSampleBeta(5, 5));
         }
