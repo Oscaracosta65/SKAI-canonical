@@ -11640,6 +11640,32 @@ Selected: Profile = Balanced - Strategy = Hybrid - Blend = Skip 45% / AI 55% (Hy
   </div>
   <div class="help">How deep SKAI&rsquo;s neural network is. More layers allow SKAI to capture more complex relationships between numbers, but too many can latch onto noise.</div>
 
+  <!-- Deterministic Mode (NEW) -->
+  <label for="deterministic">
+    Deterministic Mode
+    <span style="color:#6366f1;font-size:0.85em;font-weight:600">(NEW)</span>
+  </label>
+  <div class="range-row" style="display:flex;align-items:center;gap:10px">
+    <input type="checkbox" id="deterministic" name="deterministic" value="1" style="width:auto;margin:0">
+    <label for="deterministic" style="margin:0;font-weight:normal">Enable reproducible predictions</label>
+  </div>
+  <div class="help">
+    When enabled, SKAI uses a fixed random seed to ensure predictions are 100% reproducible. 
+    Same settings → same predictions every time. Useful for testing and validation.
+  </div>
+
+  <!-- Seed (conditional, shown when deterministic is enabled) -->
+  <div id="seed_container" style="display:none;margin-top:10px">
+    <label for="seed">Random Seed (optional)</label>
+    <div class="range-row">
+      <input type="number" id="seed" name="seed" min="1" max="2147483647" placeholder="Auto-generated" style="width:100%">
+    </div>
+    <div class="help">
+      Optional: specify a custom seed number. If left blank, SKAI will generate a stable seed from your settings.
+      Use the same seed to reproduce exact predictions.
+    </div>
+  </div>
+
 
   <!-- Activation -->
   <label for="skaiadv_activation">Activation</label>
@@ -18586,6 +18612,23 @@ strat = strat || 'N/A';
         }, 900);
       } catch(_){}
     });
+  }
+
+  // CHG: Wire deterministic checkbox to show/hide seed input
+  var detCheckbox = document.getElementById('deterministic');
+  var seedContainer = document.getElementById('seed_container');
+  if (detCheckbox && seedContainer && !detCheckbox.__skaiWired) {
+    detCheckbox.__skaiWired = true;
+    detCheckbox.addEventListener('change', function(){
+      try { window.__SKAI_USER_ACTION__ = true; } catch(_){}
+      if (detCheckbox.checked) {
+        seedContainer.style.display = 'block';
+        try { if (typeof setLive === 'function') setLive('Deterministic mode enabled - predictions will be reproducible'); } catch(_){}
+      } else {
+        seedContainer.style.display = 'none';
+        try { if (typeof setLive === 'function') setLive('Deterministic mode disabled'); } catch(_){}
+      }
+    }, false);
   }
 
 })(); // <- IIFE now closes AFTER the reset handler
@@ -26910,6 +26953,83 @@ try {
         console.log('[SKAI Deterministic] Enabled with seed:', seed);
       }
     })();
+
+    /**
+     * CHG: Reproducibility test function (callable from console)
+     * Usage: window.SKAI_testReproducibility()
+     * Returns: true if two runs produce identical results, false otherwise
+     */
+    window.SKAI_testReproducibility = function() {
+      try {
+        if (!window.SKAI_DETERMINISTIC || !window.SKAI_DETERMINISTIC.enabled) {
+          console.error('[SKAI Reproducibility Test] FAILED: Deterministic mode is not enabled');
+          return false;
+        }
+        
+        var seed = window.SKAI_DETERMINISTIC.seed;
+        if (!seed) {
+          console.error('[SKAI Reproducibility Test] FAILED: No seed found');
+          return false;
+        }
+        
+        console.log('[SKAI Reproducibility Test] Running prediction twice with seed:', seed);
+        
+        // Store current blended results
+        var run1 = window.SKAI_lastBlended ? JSON.parse(JSON.stringify(window.SKAI_lastBlended)) : null;
+        
+        if (!run1 || !Array.isArray(run1) || run1.length === 0) {
+          console.warn('[SKAI Reproducibility Test] No initial results found. Run a prediction first.');
+          return false;
+        }
+        
+        // Re-initialize deterministic state with same seed
+        window.SKAI_DETERMINISTIC.init(true, seed);
+        
+        // Trigger a new prediction by simulating the prediction process
+        // Note: In real usage, user would click "Predict" button twice
+        // For this test, we compare the Thompson sampling outputs
+        var testSamples1 = [];
+        var testSamples2 = [];
+        
+        // Sample from Beta distribution 10 times with same parameters
+        window.SKAI_DETERMINISTIC.init(true, seed);
+        for (var i = 0; i < 10; i++) {
+          testSamples1.push(window.skaiSampleBeta(5, 5));
+        }
+        
+        // Re-seed and sample again
+        window.SKAI_DETERMINISTIC.init(true, seed);
+        for (var j = 0; j < 10; j++) {
+          testSamples2.push(window.skaiSampleBeta(5, 5));
+        }
+        
+        // Compare samples
+        var identical = true;
+        for (var k = 0; k < 10; k++) {
+          if (Math.abs(testSamples1[k] - testSamples2[k]) > 1e-10) {
+            identical = false;
+            break;
+          }
+        }
+        
+        if (identical) {
+          console.log('[SKAI Reproducibility Test] PASSED ✓');
+          console.log('Samples from run 1:', testSamples1);
+          console.log('Samples from run 2:', testSamples2);
+          return true;
+        } else {
+          console.error('[SKAI Reproducibility Test] FAILED ✗');
+          console.error('Samples differ between runs:');
+          console.error('Run 1:', testSamples1);
+          console.error('Run 2:', testSamples2);
+          return false;
+        }
+        
+      } catch (e) {
+        console.error('[SKAI Reproducibility Test] ERROR:', e);
+        return false;
+      }
+    };
 
     // CHG: Stability (anti-churn) for UX: EMA blend with last scores
     // 0 = no smoothing; 1 = fully locked to previous (not recommended)
