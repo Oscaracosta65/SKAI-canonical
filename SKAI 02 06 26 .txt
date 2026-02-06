@@ -2776,12 +2776,16 @@ function SKAI_logGibbsDiagnostics($marginals, $numIterations, $burnIn) {
 
 /**
  * =====================================================================
- * DETERMINISTIC REPRODUCIBILITY TEST
+ * REPRODUCIBILITY TEST (Score-Driven, Not Random)
  * =====================================================================
- * Test that deterministic mode produces identical results
+ * Test that consistent results mode produces identical predictions
+ * 
+ * Reproducibility Key — NOT random prediction
+ * SKAI is score-driven (AI + analytics produce scores).
+ * The key is used only to make runs repeatable and to resolve near-ties consistently.
  * 
  * @param callable $predictionFn  Function that runs prediction and returns picks
- * @param array    $settings      Settings to use (must include deterministic=true and seed)
+ * @param array    $settings      Settings to use (must include deterministic=true and reproKey)
  * @return array                  Test result: {success, message, run1, run2}
  */
 function SKAI_testReproducibility($predictionFn, $settings) {
@@ -2789,16 +2793,17 @@ function SKAI_testReproducibility($predictionFn, $settings) {
         if (!isset($settings['deterministic']) || !$settings['deterministic']) {
             return [
                 'success' => false,
-                'message' => 'Deterministic mode not enabled in settings',
+                'message' => 'Consistent results mode not enabled in settings',
                 'run1' => null,
                 'run2' => null
             ];
         }
         
-        if (!isset($settings['seed'])) {
+        // Accept both reproKey and seed for backward compatibility
+        if (!isset($settings['reproKey']) && !isset($settings['seed'])) {
             return [
                 'success' => false,
-                'message' => 'Seed not provided in settings',
+                'message' => 'Reproducibility Key not provided in settings',
                 'run1' => null,
                 'run2' => null
             ];
@@ -11116,9 +11121,12 @@ th{background:#f9fafb}
                               }
 
                               // Draw P distinct random numbers from the domain for this trial/draw.
-                              // CHG: Use deterministic pick if enabled
-                              if (isset($runParams['deterministic']) && $runParams['deterministic'] && isset($runParams['seed'])) {
-                                  mt_srand($runParams['seed'] + $i); // Vary seed per iteration
+                              // Reproducibility Key — for consistent test results
+                              if (isset($runParams['deterministic']) && $runParams['deterministic']) {
+                                  $reproKey = $runParams['reproKey'] ?? $runParams['seed'] ?? null; // Accept both
+                                  if ($reproKey !== null) {
+                                      mt_srand($reproKey + $i); // Vary key per iteration for diversity
+                                  }
                                   $pickKeys = [];
                                   $domainArr = array_values($domain);
                                   for ($j = 0; $j < min($btPick, count($domain)); $j++) {
@@ -28472,8 +28480,8 @@ window.SKAI_runExtra = function runExtraBallML(settings) {
               if (diversityX > 0) {
                 // CHG: Use deterministic random if enabled, otherwise Math.random
                 if (window.SKAI_DETERMINISTIC && window.SKAI_DETERMINISTIC.enabled) {
-                  // Deterministic mode: disable stochastic noise, use epsilon tie-breaker instead
-                  // The tie-breaker is computed deterministically from seed and number
+                  // Reproducibility Key mode: disable stochastic noise, use epsilon tie-breaker instead
+                  // The tie-breaker is computed deterministically from the Reproducibility Key
                   var epsilon = 1e-8; // Small epsilon for tie-breaking
                   y += epsilon * window.SKAI_DETERMINISTIC.tieBreaker(Math.floor(x * 1000000));
                 } else {
