@@ -1397,57 +1397,19 @@ function SKAI_getTopMissReasons($gameId, $limit = 10) {
 
 /**
  * =====================================================================
- * SKAI EVALUATION ENGINE - MISS-DRIVEN WEIGHT TUNING MODULE
+ * SKAI EVALUATION ENGINE - MISS-DRIVEN WEIGHT TUNING MODULE (ON-THE-FLY)
  * =====================================================================
- * Purpose: Automatically tune component weights based on miss attribution
- * Method: Gradient-based update using reason codes and score deficits
- * Dependencies: skai_miss_attribution, skai_component_weights tables
+ * Purpose: Compute tuned component weights from draw history (zero storage)
+ * Method: Walk-forward validation with gradient-based weight updates
+ * Dependencies: None - computed entirely from draw history
  * =====================================================================
  */
-
-/**
- * Load tuned component weights for a game
- * 
- * @param string $gameId  Game identifier
- * @return array|null     Weights array or null if no tuned weights exist
- */
-function SKAI_loadComponentWeights($gameId) {
-    static $cache = [];
-    
-    if (isset($cache[$gameId])) {
-        return $cache[$gameId];
-    }
-    
-    try {
-        $db = Factory::getDbo();
-        $query = $db->getQuery(true);
-        
-        $query->select('weights_json, metric_value, updated_at')
-            ->from($db->quoteName('#__skai_component_weights'))
-            ->where($db->quoteName('game_id') . ' = ' . $db->quote($gameId))
-            ->setLimit(1);
-        
-        $db->setQuery($query);
-        $result = $db->loadAssoc();
-        
-        if ($result) {
-            $weights = json_decode($result['weights_json'], true);
-            $cache[$gameId] = $weights;
-            return $weights;
-        }
-        
-        return null;
-        
-    } catch (\Exception $e) {
-        error_log('[SKAI] loadComponentWeights error: ' . $e->getMessage());
-        return null;
-    }
-}
 
 /**
  * Get default component weights
  * 
- * @return array  Default weights for frequency, skip, recency, cooccur
+ * @return array  Default weights for frequency, skip, recency, cooccur, historical
+ */
  */
 function SKAI_getDefaultComponentWeights() {
     return [
@@ -1459,137 +1421,319 @@ function SKAI_getDefaultComponentWeights() {
 }
 
 /**
- * Tune component weights from miss attribution records
+ * Compute tuned component weights on-the-fly from draw history (ZERO STORAGE)
  * 
- * @param string $gameId      Game identifier
- * @param int    $windowSize  Rolling validation window (number of draws)
- * @param float  $lr          Learning rate for gradient update
- * @param float  $smooth      Smoothing factor for weight update
- * @return array              Result: {success, old_weights, new_weights, metric_before, metric_after, improved, message}
+ * Uses walk-forward validation to identify misses and adjust weights.
+ * No database persistence - weights are computed fresh for each request.
+ * 
+ * @param string $gameId       Game identifier
+ * @param array  $baseWeights  Starting weights {frequency, skip, recency, cooccur, historical?}
+ * @param array  $drawHistory  Full draw history: [{date, numbers, extra?}, ...]
+ * @param int    $windowSize   Validation window (number of recent draws to analyze)
+ * @param float  $lr           Learning rate for gradient update (default 0.05)
+ * @param float  $smooth       Smoothing factor for weight update (default 0.2)
+ * @return array               Tuned weights or original if no improvement
  */
-function SKAI_tuneWeightsFromMisses($gameId, $windowSize = 60, $lr = 0.05, $smooth = 0.2) {
+function SKAI_computeTunedWeights($gameId, $baseWeights, $drawHistory, $windowSize = 60, $lr = 0.05, $smooth = 0.2) {
+    // Cache within request
+    static $cache = [];
+    $cacheKey = $gameId . '_' . count($drawHistory) . '_' . $windowSize;
+    
+    if (isset($cache[$cacheKey])) {
+        return $cache[$cacheKey];
+    }
+    
     try {
-        error_log("[SKAI] Starting weight tuning for game {$gameId}, window={$windowSize}, lr={$lr}, smooth={$smooth}");
+        $startTime = microtime(true);
         
-        // Load current weights or use defaults
-        $currentWeights = SKAI_loadComponentWeights($gameId);
-        if (!$currentWeights) {
-            $currentWeights = SKAI_getDefaultComponentWeights();
-            error_log("[SKAI] Using default weights: " . json_encode($currentWeights));
-        } else {
-            error_log("[SKAI] Loaded current weights: " . json_encode($currentWeights));
+        // Validate inputs
+        if (empty($drawHistory) || count($drawHistory) < $windowSize + 10) {
+            error_log("[SKAI] Insufficient draw history for tuning (need at least " . ($windowSize + 10) . " draws)");
+            return $baseWeights;
         }
         
-        // Pull last N miss attribution records
-        $db = Factory::getDbo();
-        $query = $db->getQuery(true);
+        // Use last N draws as validation window
+        $totalDraws = count($drawHistory);
+        $validationStart = max(0, $totalDraws - $windowSize);
+        $validationDraws = array_slice($drawHistory, $validationStart);
         
-        $query->select('*')
-            ->from($db->quoteName('#__skai_miss_attribution'))
-            ->where($db->quoteName('game_id') . ' = ' . $db->quote($gameId))
-            ->order($db->quoteName('test_draw_date') . ' DESC')
-            ->setLimit($windowSize);
-        
-        $db->setQuery($query);
-        $missRecords = $db->loadAssocList();
-        
-        if (empty($missRecords)) {
-            return [
-                'success' => false,
-                'message' => 'No miss attribution records found for tuning',
-                'old_weights' => $currentWeights,
-                'new_weights' => $currentWeights
-            ];
+        if (empty($validationDraws)) {
+            return $baseWeights;
         }
         
-        error_log("[SKAI] Retrieved " . count($missRecords) . " miss records");
+        error_log("[SKAI] Starting on-the-fly weight tuning: game={$gameId}, window={$windowSize}, draws=" . count($validationDraws));
         
-        // Decode JSON fields
-        foreach ($missRecords as &$record) {
-            $record['score_parts_json'] = json_decode($record['score_parts_json'], true);
-            $record['top20_median_json'] = json_decode($record['top20_median_json'], true);
-            $record['sensitivity_json'] = json_decode($record['sensitivity_json'], true);
+        // Accumulate deficit signals across validation window
+        $totalDeficits = [
+            'frequency' => 0,
+            'skip' => 0,
+            'recency' => 0,
+            'cooccur' => 0
+        ];
+        
+        $numMisses = 0;
+        $topK = 20; // Top 20 for recall calculation
+        
+        // Walk-forward validation: for each validation draw
+        foreach ($validationDraws as $validIdx => $validDraw) {
+            // Training data: all draws BEFORE this validation draw
+            $trainEndIdx = $validationStart + $validIdx;
+            if ($trainEndIdx < 10) {
+                continue; // Need minimum training data
+            }
+            
+            $trainingHistory = array_slice($drawHistory, 0, $trainEndIdx);
+            
+            // Identify winning numbers for this draw
+            $winners = $validDraw['numbers'] ?? [];
+            if (empty($winners)) {
+                continue;
+            }
+            
+            // Simulate scoring with current weights
+            // This is simplified - in production, you'd call actual scoring functions
+            $candidates = SKAI_scoreDrawSimplified($trainingHistory, $baseWeights);
+            
+            if (empty($candidates)) {
+                continue;
+            }
+            
+            // Sort by score and get top K
+            usort($candidates, function($a, $b) {
+                return $b['score'] <=> $a['score'];
+            });
+            
+            $topKNums = array_slice(array_column($candidates, 'num'), 0, $topK);
+            $topKSet = array_flip($topKNums);
+            
+            // Identify misses
+            $misses = [];
+            foreach ($winners as $winner) {
+                if (!isset($topKSet[$winner])) {
+                    // Find this number in ranked list
+                    foreach ($candidates as $cand) {
+                        if ($cand['num'] == $winner) {
+                            $misses[] = $cand;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (empty($misses)) {
+                continue; // Perfect recall for this draw
+            }
+            
+            // Compute median score_parts of top K
+            $topKCandidates = array_slice($candidates, 0, $topK);
+            $medianParts = SKAI_computeMedianScoreParts($topKCandidates);
+            
+            // For each miss, compute component deficits
+            foreach ($misses as $miss) {
+                $parts = $miss['parts'] ?? [];
+                
+                // Compare to median and accumulate deficits
+                $freqDeficit = max(0, ($medianParts['freq'] ?? 0) - ($parts['freq'] ?? 0));
+                $skipDeficit = max(0, ($medianParts['skip'] ?? 0) - ($parts['skip'] ?? 0));
+                $recencyDeficit = max(0, ($medianParts['recency'] ?? 0) - ($parts['recency'] ?? 0));
+                $cooccurDeficit = max(0, ($medianParts['cooccur'] ?? 0) - ($parts['cooccur'] ?? 0));
+                
+                $totalDeficits['frequency'] += $freqDeficit;
+                $totalDeficits['skip'] += $skipDeficit;
+                $totalDeficits['recency'] += $recencyDeficit;
+                $totalDeficits['cooccur'] += $cooccurDeficit;
+                
+                $numMisses++;
+            }
         }
-        unset($record);
         
-        // Aggregate deficit signals
-        $deficitSignals = SKAI_aggregateDeficitSignals($missRecords);
-        error_log("[SKAI] Deficit signals: " . json_encode($deficitSignals));
+        if ($numMisses == 0) {
+            error_log("[SKAI] No misses found in validation window - keeping base weights");
+            $cache[$cacheKey] = $baseWeights;
+            return $baseWeights;
+        }
         
-        // Compute weight deltas based on deficit signals
-        $deltas = SKAI_computeWeightDeltas($deficitSignals, $lr);
-        error_log("[SKAI] Weight deltas: " . json_encode($deltas));
+        // Average deficits
+        foreach ($totalDeficits as $comp => $deficit) {
+            $totalDeficits[$comp] = $deficit / $numMisses;
+        }
         
-        // Apply smoothed update
-        $newWeights = SKAI_applyWeightUpdate($currentWeights, $deltas, $smooth);
-        error_log("[SKAI] New weights (before validation): " . json_encode($newWeights));
+        error_log("[SKAI] Analyzed {$numMisses} misses, avg deficits: " . json_encode($totalDeficits));
         
-        // Evaluate both weight sets
-        $metricBefore = SKAI_evaluateWeights($gameId, $currentWeights, $windowSize);
-        $metricAfter = SKAI_evaluateWeights($gameId, $newWeights, $windowSize);
+        // Compute weight deltas proportional to deficits
+        $deltas = SKAI_computeWeightDeltas(['component_deficits' => $totalDeficits], $lr);
         
-        error_log("[SKAI] Metric before: {$metricBefore}, after: {$metricAfter}");
+        // Apply smoothed update with clamping
+        $newWeights = SKAI_applyWeightUpdate($baseWeights, $deltas, $smooth);
         
-        // Check if improvement meets threshold
-        $improvementThreshold = 0.002;
+        error_log("[SKAI] Candidate weights: " . json_encode($newWeights));
+        
+        // Evaluate both weight sets (simplified - use deficit-based proxy)
+        $metricBefore = SKAI_evaluateWeightsSimplified($baseWeights, $totalDeficits);
+        $metricAfter = SKAI_evaluateWeightsSimplified($newWeights, $totalDeficits);
+        
         $improvement = $metricAfter - $metricBefore;
-        $improved = $improvement >= $improvementThreshold;
+        $threshold = 0.002;
         
-        if ($improved) {
-            // Commit new weights
-            SKAI_upsertComponentWeights(
-                $gameId, 
-                $newWeights, 
-                $windowSize, 
-                'recall20', 
-                $metricAfter,
-                count($missRecords),
-                $deficitSignals['top_reasons']
-            );
+        error_log("[SKAI] Metrics: before={$metricBefore}, after={$metricAfter}, improvement={$improvement}");
+        
+        // Accept if improvement meets threshold
+        if ($improvement >= $threshold) {
+            error_log("[SKAI] Accepting tuned weights (improvement: " . number_format($improvement, 4) . ")");
+            $cache[$cacheKey] = $newWeights;
             
-            error_log("[SKAI] Weights updated successfully. Improvement: " . number_format($improvement, 4));
+            $elapsed = microtime(true) - $startTime;
+            error_log("[SKAI] Weight tuning completed in " . number_format($elapsed, 3) . "s");
             
-            return [
-                'success' => true,
-                'improved' => true,
-                'old_weights' => $currentWeights,
-                'new_weights' => $newWeights,
-                'metric_before' => $metricBefore,
-                'metric_after' => $metricAfter,
-                'improvement' => $improvement,
-                'message' => "Weights tuned successfully. Recall@20 improved by " . number_format($improvement * 100, 2) . "%",
-                'top_reasons' => $deficitSignals['top_reasons']
-            ];
+            return $newWeights;
         } else {
-            error_log("[SKAI] Weights not updated. Improvement ({$improvement}) below threshold ({$improvementThreshold})");
-            
-            return [
-                'success' => true,
-                'improved' => false,
-                'old_weights' => $currentWeights,
-                'new_weights' => $newWeights,
-                'metric_before' => $metricBefore,
-                'metric_after' => $metricAfter,
-                'improvement' => $improvement,
-                'message' => "Candidate weights did not improve metric (improvement: " . number_format($improvement * 100, 2) . "%). Keeping current weights.",
-                'top_reasons' => $deficitSignals['top_reasons']
-            ];
+            error_log("[SKAI] Rejecting tuned weights (insufficient improvement: " . number_format($improvement, 4) . ")");
+            $cache[$cacheKey] = $baseWeights;
+            return $baseWeights;
         }
         
     } catch (\Exception $e) {
-        error_log('[SKAI] tuneWeightsFromMisses error: ' . $e->getMessage());
-        return [
-            'success' => false,
-            'message' => 'Error during weight tuning: ' . $e->getMessage()
-        ];
+        error_log('[SKAI] computeTunedWeights error: ' . $e->getMessage());
+        return $baseWeights;
     }
 }
 
 /**
- * Aggregate deficit signals from miss records
+ * Simplified scoring for weight tuning (avoids heavy ML computation)
+ * 
+ * @param array $history  Historical draws
+ * @param array $weights  Component weights
+ * @return array          Candidates: [{num, score, parts}]
+ */
+function SKAI_scoreDrawSimplified($history, $weights) {
+    $candidates = [];
+    
+    // Determine domain (typically 1-70 for main numbers)
+    $domain = 70; // Default, adjust based on game
+    
+    // Compute simple frequency and recency for each number
+    $freqMap = [];
+    $lastSeenMap = [];
+    
+    $historyLen = count($history);
+    foreach ($history as $idx => $draw) {
+        $numbers = $draw['numbers'] ?? [];
+        foreach ($numbers as $num) {
+            $freqMap[$num] = ($freqMap[$num] ?? 0) + 1;
+            $lastSeenMap[$num] = $idx;
+        }
+    }
+    
+    // Score each candidate
+    for ($num = 1; $num <= $domain; $num++) {
+        $freq = $freqMap[$num] ?? 0;
+        $lastSeen = $lastSeenMap[$num] ?? -1;
+        $skip = $lastSeen >= 0 ? ($historyLen - 1 - $lastSeen) : $historyLen;
+        
+        // Normalize components
+        $freqScore = $historyLen > 0 ? $freq / $historyLen : 0;
+        $skipScore = $historyLen > 0 ? (1 - $skip / $historyLen) : 0; // Invert: lower skip = higher score
+        $recencyScore = $lastSeen >= 0 ? ($lastSeen / $historyLen) : 0;
+        
+        // Simple cooccurrence proxy (average)
+        $cooccurScore = ($freqScore + $recencyScore) / 2;
+        
+        // Weighted sum
+        $score = 
+            $weights['frequency'] * $freqScore +
+            $weights['skip'] * $skipScore +
+            $weights['recency'] * $recencyScore +
+            $weights['cooccur'] * $cooccurScore;
+        
+        $candidates[] = [
+            'num' => $num,
+            'score' => $score,
+            'parts' => [
+                'freq' => $freqScore,
+                'skip' => $skipScore,
+                'recency' => $recencyScore,
+                'cooccur' => $cooccurScore
+            ]
+        ];
+    }
+    
+    return $candidates;
+}
+
+/**
+ * Compute median score parts across candidates
+ * 
+ * @param array $candidates  Array of candidates with 'parts'
+ * @return array             Median parts
+ */
+function SKAI_computeMedianScoreParts($candidates) {
+    if (empty($candidates)) {
+        return ['freq' => 0, 'skip' => 0, 'recency' => 0, 'cooccur' => 0];
+    }
+    
+    $allParts = [
+        'freq' => [],
+        'skip' => [],
+        'recency' => [],
+        'cooccur' => []
+    ];
+    
+    foreach ($candidates as $cand) {
+        $parts = $cand['parts'] ?? [];
+        foreach ($allParts as $key => $arr) {
+            if (isset($parts[$key])) {
+                $allParts[$key][] = $parts[$key];
+            }
+        }
+    }
+    
+    $median = [];
+    foreach ($allParts as $key => $values) {
+        sort($values);
+        $count = count($values);
+        if ($count > 0) {
+            $mid = (int)($count / 2);
+            $median[$key] = $count % 2 == 0 
+                ? ($values[$mid - 1] + $values[$mid]) / 2 
+                : $values[$mid];
+        } else {
+            $median[$key] = 0;
+        }
+    }
+    
+    return $median;
+}
+
+/**
+ * Evaluate weights using deficit-based proxy metric
+ * 
+ * @param array $weights   Component weights
+ * @param array $deficits  Component deficits
+ * @return float           Proxy metric (higher = better alignment)
+ */
+function SKAI_evaluateWeightsSimplified($weights, $deficits) {
+    // Metric: inverse weighted deficit
+    // Lower weighted deficit = better weights = higher metric
+    
+    $weightedDeficit = 0;
+    foreach ($weights as $comp => $weight) {
+        $deficit = $deficits[$comp] ?? 0;
+        $weightedDeficit += $weight * $deficit;
+    }
+    
+    // Invert and normalize to [0, 1] range
+    $metric = 1.0 / (1.0 + $weightedDeficit);
+    
+    return $metric;
+}
+
+/**
+ * Aggregate deficit signals from miss records (kept for backward compatibility)
+ * Note: This version works with in-memory miss data, not database records
  * 
  * @param array $missRecords  Miss attribution records
  * @return array              {component_deficits, top_reasons, reason_counts}
+ */
  */
 function SKAI_aggregateDeficitSignals($missRecords) {
     $componentDeficits = [
@@ -1742,172 +1886,6 @@ function SKAI_applyWeightUpdate($oldWeights, $deltas, $smooth) {
     }
     
     return $finalWeights;
-}
-
-/**
- * Evaluate weights using Recall@20 on miss attribution data
- * 
- * @param string $gameId      Game identifier
- * @param array  $weights     Component weights to evaluate
- * @param int    $windowSize  Validation window size
- * @return float              Average Recall@20
- */
-function SKAI_evaluateWeights($gameId, $weights, $windowSize) {
-    try {
-        // This is a simplified evaluation
-        // In a full implementation, we would:
-        // 1. Re-score all candidates using the new weights
-        // 2. Re-rank and get top 20
-        // 3. Compute Recall@20 for each draw
-        // 4. Return average
-        
-        // For now, we'll use a proxy: compute weighted score based on miss records
-        $db = Factory::getDbo();
-        $query = $db->getQuery(true);
-        
-        $query->select('missed_number, score_parts_json, top20_median_json')
-            ->from($db->quoteName('#__skai_miss_attribution'))
-            ->where($db->quoteName('game_id') . ' = ' . $db->quote($gameId))
-            ->order($db->quoteName('test_draw_date') . ' DESC')
-            ->setLimit($windowSize);
-        
-        $db->setQuery($query);
-        $records = $db->loadAssocList();
-        
-        if (empty($records)) {
-            return 0.0;
-        }
-        
-        // Compute average "quality score" using weights
-        // Higher score means missed numbers were closer to making top 20
-        $totalScore = 0;
-        foreach ($records as $record) {
-            $scoreParts = json_decode($record['score_parts_json'], true);
-            $top20Median = json_decode($record['top20_median_json'], true);
-            
-            // Map to component weights
-            $freq = $scoreParts['freq'] ?? 0;
-            $window = $scoreParts['window'] ?? 0;
-            $recency = $scoreParts['recency'] ?? 0;
-            $pairwise = $scoreParts['pairwise'] ?? 0;
-            
-            $freqMedian = $top20Median['freq'] ?? 0;
-            $windowMedian = $top20Median['window'] ?? 0;
-            $recencyMedian = $top20Median['recency'] ?? 0;
-            $pairwiseMedian = $top20Median['pairwise'] ?? 0;
-            
-            // Compute ratio of actual to median for each component
-            $freqRatio = $freqMedian > 0 ? $freq / $freqMedian : 0;
-            $skipRatio = $windowMedian > 0 ? $window / $windowMedian : 0;
-            $recencyRatio = $recencyMedian > 0 ? $recency / $recencyMedian : 0;
-            $cooccurRatio = $pairwiseMedian > 0 ? $pairwise / $pairwiseMedian : 0;
-            
-            // Weighted average
-            $weightedScore = 
-                $weights['frequency'] * $freqRatio +
-                $weights['skip'] * $skipRatio +
-                $weights['recency'] * $recencyRatio +
-                $weights['cooccur'] * $cooccurRatio;
-            
-            $totalScore += $weightedScore;
-        }
-        
-        // Average score (proxy for recall)
-        $avgScore = $totalScore / count($records);
-        
-        // Normalize to [0, 1] range (approximate recall)
-        return min(1.0, max(0.0, $avgScore));
-        
-    } catch (\Exception $e) {
-        error_log('[SKAI] evaluateWeights error: ' . $e->getMessage());
-        return 0.0;
-    }
-}
-
-/**
- * Upsert component weights for a game
- * 
- * @param string $gameId           Game identifier
- * @param array  $weights          Component weights
- * @param int    $windowSize       Window size used
- * @param string $metric           Metric name (recall20, ndcg20)
- * @param float  $metricValue      Metric value achieved
- * @param int    $numMisses        Number of misses analyzed
- * @param string $topReasons       Top reason codes
- * @return bool                    Success status
- */
-function SKAI_upsertComponentWeights($gameId, $weights, $windowSize, $metric, $metricValue, $numMisses = 0, $topReasons = '') {
-    try {
-        $db = Factory::getDbo();
-        $now = new Date('now');
-        
-        // Check if record exists
-        $query = $db->getQuery(true);
-        $query->select('id')
-            ->from($db->quoteName('#__skai_component_weights'))
-            ->where($db->quoteName('game_id') . ' = ' . $db->quote($gameId));
-        
-        $db->setQuery($query);
-        $existingId = $db->loadResult();
-        
-        if ($existingId) {
-            // Update existing record
-            $query = $db->getQuery(true);
-            $query->update($db->quoteName('#__skai_component_weights'))
-                ->set($db->quoteName('weights_json') . ' = ' . $db->quote(json_encode($weights)))
-                ->set($db->quoteName('window_size') . ' = ' . (int)$windowSize)
-                ->set($db->quoteName('metric') . ' = ' . $db->quote($metric))
-                ->set($db->quoteName('metric_value') . ' = ' . (float)$metricValue)
-                ->set($db->quoteName('num_misses_analyzed') . ' = ' . (int)$numMisses)
-                ->set($db->quoteName('top_reason_codes') . ' = ' . $db->quote($topReasons))
-                ->set($db->quoteName('updated_at') . ' = ' . $db->quote($now->toSql()))
-                ->where($db->quoteName('id') . ' = ' . (int)$existingId);
-            
-            $db->setQuery($query);
-            $db->execute();
-            
-            error_log("[SKAI] Updated component weights for game {$gameId}");
-        } else {
-            // Insert new record
-            $query = $db->getQuery(true);
-            $columns = [
-                'game_id',
-                'weights_json',
-                'window_size',
-                'metric',
-                'metric_value',
-                'num_misses_analyzed',
-                'top_reason_codes',
-                'updated_at'
-            ];
-            
-            $values = [
-                $db->quote($gameId),
-                $db->quote(json_encode($weights)),
-                (int)$windowSize,
-                $db->quote($metric),
-                (float)$metricValue,
-                (int)$numMisses,
-                $db->quote($topReasons),
-                $db->quote($now->toSql())
-            ];
-            
-            $query->insert($db->quoteName('#__skai_component_weights'))
-                ->columns($db->quoteName($columns))
-                ->values(implode(',', $values));
-            
-            $db->setQuery($query);
-            $db->execute();
-            
-            error_log("[SKAI] Inserted new component weights for game {$gameId}");
-        }
-        
-        return true;
-        
-    } catch (\Exception $e) {
-        error_log('[SKAI] upsertComponentWeights error: ' . $e->getMessage());
-        return false;
-    }
 }
 
 /**
