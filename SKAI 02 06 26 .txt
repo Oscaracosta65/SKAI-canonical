@@ -1410,7 +1410,6 @@ function SKAI_getTopMissReasons($gameId, $limit = 10) {
  * 
  * @return array  Default weights for frequency, skip, recency, cooccur, historical
  */
- */
 function SKAI_getDefaultComponentWeights() {
     return [
         'frequency' => 0.25,
@@ -1733,7 +1732,6 @@ function SKAI_evaluateWeightsSimplified($weights, $deficits) {
  * 
  * @param array $missRecords  Miss attribution records
  * @return array              {component_deficits, top_reasons, reason_counts}
- */
  */
 function SKAI_aggregateDeficitSignals($missRecords) {
     $componentDeficits = [
