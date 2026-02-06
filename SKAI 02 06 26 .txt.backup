@@ -284,13 +284,10 @@ function SKAI_Evaluation_Install() {
                 `ranked_list` MEDIUMTEXT NOT NULL,
                 `top20_nums` VARCHAR(200) NOT NULL,
                 `extras_json` TEXT NULL,
-                `deterministic` TINYINT(1) NOT NULL DEFAULT 0,
-                `seed` INT NULL,
                 `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (`id`),
                 INDEX `idx_game_run` (`game_id`, `run_date`),
-                INDEX `idx_draw_date` (`draw_date`),
-                INDEX `idx_deterministic_seed` (`deterministic`, `seed`)
+                INDEX `idx_draw_date` (`draw_date`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
             
             "CREATE TABLE IF NOT EXISTS `{$prefix}skai_backtest_metrics` (
@@ -490,7 +487,7 @@ if (isset($_GET['install_eval']) && $_GET['install_eval'] == '1') {
  * @param array  $extrasRanked   Extra ball predictions (optional)
  * @return int|false             Inserted log ID or false on failure
  */
-function SKAI_logPredictionRun($gameId, $rankedList, $top20Nums, $params, $drawDate = null, $extrasRanked = [], $deterministic = false, $seed = null) {
+function SKAI_logPredictionRun($gameId, $rankedList, $top20Nums, $params, $drawDate = null, $extrasRanked = []) {
     try {
         $db = Factory::getDbo();
         $query = $db->getQuery(true);
@@ -543,8 +540,6 @@ function SKAI_logPredictionRun($gameId, $rankedList, $top20Nums, $params, $drawD
             'ranked_list',
             'top20_nums',
             'extras_json',
-            'deterministic',
-            'seed',
             'created_at'
         ];
         
@@ -557,8 +552,6 @@ function SKAI_logPredictionRun($gameId, $rankedList, $top20Nums, $params, $drawD
             $db->quote(json_encode($fullRankedList, JSON_UNESCAPED_UNICODE)),
             $db->quote(implode(',', $top20Nums)),
             !empty($extrasRanked) ? $db->quote(json_encode($extrasRanked, JSON_UNESCAPED_UNICODE)) : 'NULL',
-            $deterministic ? '1' : '0',
-            $seed !== null ? (int)$seed : 'NULL',
             $db->quote($now->toSql())
         ];
         
@@ -2009,17 +2002,10 @@ function SKAI_addPairwiseBonuses($candidates, $liftMap, $seedSize = 10, $topK = 
  * @param float $beta            Pairwise interaction strength (default 1.0)
  * @param array $constraints     Constraint weights: {sum_band, parity, gap}
  * @param int   $domain          Number domain max (e.g., 70)
- * @param bool  $deterministic   If true, use seeded randomness (default false)
- * @param int   $seed            Seed for deterministic mode (optional)
  * @return array                 Marginal probabilities: {num => prob}
  */
-function SKAI_gibbsSampling($candidates, $liftMap, $setSize, $numIterations = 1000, $beta = 1.0, $constraints = [], $domain = 70, $deterministic = false, $seed = null) {
+function SKAI_gibbsSampling($candidates, $liftMap, $setSize, $numIterations = 1000, $beta = 1.0, $constraints = [], $domain = 70) {
     try {
-        // CHG: Initialize seeded RNG if deterministic mode is enabled
-        if ($deterministic && $seed !== null) {
-            mt_srand($seed);
-        }
-        
         // Initialize with top K by calibrated score
         usort($candidates, function($a, $b) {
             $scoreA = $a['calibrated_score'] ?? $a['score_total'] ?? 0.0;
@@ -2043,12 +2029,7 @@ function SKAI_gibbsSampling($candidates, $liftMap, $setSize, $numIterations = 10
         // MCMC sampling
         for ($iter = 0; $iter < $numIterations; $iter++) {
             // Propose a swap: remove one, add another
-            // CHG: Use deterministic selection if enabled
-            if ($deterministic) {
-                $removeIdx = array_keys($currentSet)[mt_rand(0, count($currentSet) - 1)];
-            } else {
-                $removeIdx = array_rand($currentSet);
-            }
+            $removeIdx = array_rand($currentSet);
             $removeNum = $currentSet[$removeIdx];
             
             // Pick a candidate not in current set
@@ -2056,13 +2037,7 @@ function SKAI_gibbsSampling($candidates, $liftMap, $setSize, $numIterations = 10
             if (empty($available)) {
                 break;
             }
-            // CHG: Use deterministic selection if enabled
-            if ($deterministic) {
-                $available = array_values($available); // Re-index
-                $addNum = $available[mt_rand(0, count($available) - 1)];
-            } else {
-                $addNum = $available[array_rand($available)];
-            }
+            $addNum = $available[array_rand($available)];
             
             // Calculate energy change
             $deltaE = SKAI_calculateEnergyDelta(
@@ -2259,92 +2234,6 @@ function SKAI_logGibbsDiagnostics($marginals, $numIterations, $burnIn) {
         
     } catch (\Exception $e) {
         error_log('[SKAI] logGibbsDiagnostics error: ' . $e->getMessage());
-    }
-}
-
-/**
- * =====================================================================
- * DETERMINISTIC REPRODUCIBILITY TEST
- * =====================================================================
- * Test that deterministic mode produces identical results
- * 
- * @param callable $predictionFn  Function that runs prediction and returns picks
- * @param array    $settings      Settings to use (must include deterministic=true and seed)
- * @return array                  Test result: {success, message, run1, run2}
- */
-function SKAI_testReproducibility($predictionFn, $settings) {
-    try {
-        if (!isset($settings['deterministic']) || !$settings['deterministic']) {
-            return [
-                'success' => false,
-                'message' => 'Deterministic mode not enabled in settings',
-                'run1' => null,
-                'run2' => null
-            ];
-        }
-        
-        if (!isset($settings['seed'])) {
-            return [
-                'success' => false,
-                'message' => 'Seed not provided in settings',
-                'run1' => null,
-                'run2' => null
-            ];
-        }
-        
-        // Run prediction twice with same settings
-        $run1 = call_user_func($predictionFn, $settings);
-        $run2 = call_user_func($predictionFn, $settings);
-        
-        // Extract picks for comparison
-        $picks1Main = isset($run1['main']) ? $run1['main'] : [];
-        $picks2Main = isset($run2['main']) ? $run2['main'] : [];
-        $picks1Extra = isset($run1['extra']) ? $run1['extra'] : [];
-        $picks2Extra = isset($run2['extra']) ? $run2['extra'] : [];
-        
-        // Compare main picks
-        $mainMatch = (json_encode($picks1Main) === json_encode($picks2Main));
-        
-        // Compare extra picks
-        $extraMatch = (json_encode($picks1Extra) === json_encode($picks2Extra));
-        
-        $success = $mainMatch && $extraMatch;
-        
-        if ($success) {
-            return [
-                'success' => true,
-                'message' => 'Reproducibility test PASSED: Identical picks on both runs',
-                'run1' => $run1,
-                'run2' => $run2
-            ];
-        } else {
-            $details = [];
-            if (!$mainMatch) {
-                $details[] = 'Main picks differ';
-                $details[] = 'Run1 main: ' . json_encode($picks1Main);
-                $details[] = 'Run2 main: ' . json_encode($picks2Main);
-            }
-            if (!$extraMatch) {
-                $details[] = 'Extra picks differ';
-                $details[] = 'Run1 extra: ' . json_encode($picks1Extra);
-                $details[] = 'Run2 extra: ' . json_encode($picks2Extra);
-            }
-            
-            return [
-                'success' => false,
-                'message' => 'Reproducibility test FAILED: ' . implode('; ', $details),
-                'run1' => $run1,
-                'run2' => $run2
-            ];
-        }
-        
-    } catch (\Exception $e) {
-        return [
-            'success' => false,
-            'message' => 'Reproducibility test error: ' . $e->getMessage(),
-            'run1' => null,
-            'run2' => null
-        ];
     }
 }
 
@@ -10604,19 +10493,7 @@ th{background:#f9fafb}
                               }
 
                               // Draw P distinct random numbers from the domain for this trial/draw.
-                              // CHG: Use deterministic pick if enabled
-                              if (isset($runParams['deterministic']) && $runParams['deterministic'] && isset($runParams['seed'])) {
-                                  mt_srand($runParams['seed'] + $i); // Vary seed per iteration
-                                  $pickKeys = [];
-                                  $domainArr = array_values($domain);
-                                  for ($j = 0; $j < min($btPick, count($domain)); $j++) {
-                                      $idx = mt_rand(0, count($domainArr) - 1);
-                                      $pickKeys[] = $domainArr[$idx];
-                                      array_splice($domainArr, $idx, 1);
-                                  }
-                              } else {
-                                  $pickKeys = (array) array_rand($domain, min($btPick, count($domain)));
-                              }
+                              $pickKeys = (array) array_rand($domain, min($btPick, count($domain)));
                               $randPick = [];
                               foreach ($pickKeys as $k) {
                                   $randPick[] = $domain[$k];
@@ -20291,7 +20168,7 @@ function candidatesFor(id){
   ].filter(Boolean);
 }
   // lightweight factory
-  var tipEl = null, tipId = 'skai-tip-' + (window.SKAI_DETERMINISTIC && window.SKAI_DETERMINISTIC.enabled ? window.SKAI_DETERMINISTIC.randInt(100000, 999999) : Math.random().toString(36).slice(2));
+  var tipEl = null, tipId = 'skai-tip-' + Math.random().toString(36).slice(2);
   var __tipRaf = null, __tipTimer = null; // coalesce + cleanup handles
 
   // RAF/CAN polyfills local to this IIFE (module-safe)
@@ -22940,107 +22817,23 @@ if (live0) live0.textContent = 'Nothing to copy yet - run AI first.';
   window.skaiToInt = window.skaiToInt || toInt;
   window.makeSkaiFeatureVector = window.makeSkaiFeatureVector || makeFeatureVector;
 
-  // ========================================================================
-  // DETERMINISTIC PRNG (Seeded Random Number Generator)
-  // ========================================================================
-  
-  /**
-   * Mulberry32 seeded PRNG - deterministic random number generator
-   * Returns a function that generates numbers in [0, 1)
-   */
-  window.skaiMulberry32 = function(seed) {
-    return function() {
-      var t = seed += 0x6D2B79F5;
-      t = Math.imul(t ^ t >>> 15, t | 1);
-      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-      return ((t ^ t >>> 14) >>> 0) / 4294967296;
-    };
-  };
-  
-  /**
-   * Generate a stable seed from settings hash
-   * Uses a simple hash function to convert settings to a deterministic integer seed
-   */
-  window.skaiGenerateSeed = function(lottery_id, gameId, pick, extra, windowSize, weights, mode) {
-    var str = [
-      lottery_id || '',
-      gameId || '',
-      pick || '',
-      extra || '',
-      windowSize || '',
-      JSON.stringify(weights || {}),
-      mode || ''
-    ].join('|');
-    
-    var hash = 0;
-    for (var i = 0; i < str.length; i++) {
-      var chr = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + chr;
-      hash |= 0; // Convert to 32-bit integer
-    }
-    return Math.abs(hash);
-  };
-  
-  /**
-   * Deterministic state manager
-   * When deterministic mode is on, all random operations use seeded PRNG
-   */
-  window.SKAI_DETERMINISTIC = {
-    enabled: false,
-    seed: null,
-    prng: null,
-    
-    init: function(deterministic, seed) {
-      this.enabled = !!deterministic;
-      this.seed = seed || null;
-      if (this.enabled && this.seed) {
-        this.prng = window.skaiMulberry32(this.seed);
-      } else {
-        this.prng = null;
-      }
-    },
-    
-    // Core random function - use seeded PRNG if deterministic, else Math.random
-    rand: function() {
-      if (this.enabled && this.prng) {
-        return this.prng();
-      }
-      return Math.random();
-    },
-    
-    // Random integer in [min, max)
-    randInt: function(min, max) {
-      return Math.floor(this.rand() * (max - min)) + min;
-    },
-    
-    // Deterministic tie-breaker for sorting (hash-based)
-    tieBreaker: function(value) {
-      if (!this.enabled || !this.seed) return value;
-      // Simple hash combining seed and value
-      var hash = this.seed;
-      hash = ((hash << 5) - hash) + value;
-      hash |= 0;
-      return Math.abs(hash) / 4294967296; // Normalize to [0, 1)
-    }
-  };
-  
   // CHG: Thompson Sampling helpers (ES5-safe)
   // Beta(a,b) via Gamma(a,1), Gamma(b,1) using Marsaglia–Tsang.
   window.skaiRandn = window.skaiRandn || function(){
-    // Box–Muller - now uses deterministic random if enabled
+    // Box–Muller
     var u = 0, v = 0;
-    while (u === 0) u = window.SKAI_DETERMINISTIC.rand();
-    while (v === 0) v = window.SKAI_DETERMINISTIC.rand();
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
   };
 
   window.skaiSampleGamma = window.skaiSampleGamma || function(k){
-    // Gamma(k,1), k>0 - now uses deterministic random if enabled
+    // Gamma(k,1), k>0
     if (!(k > 0)) return 0;
 
     // Boost for k < 1 using Gamma(k) = Gamma(k+1) * U^(1/k)
     if (k < 1){
-      var u = window.SKAI_DETERMINISTIC.rand();
+      var u = Math.random();
       return window.skaiSampleGamma(k + 1) * Math.pow(u, 1 / k);
     }
 
@@ -23054,7 +22847,7 @@ if (live0) live0.textContent = 'Nothing to copy yet - run AI first.';
       if (v <= 0) continue;
       v = v * v * v;
 
-      var u2 = window.SKAI_DETERMINISTIC.rand();
+      var u2 = Math.random();
       // Squeeze
       if (u2 < 1 - 0.0331 * x * x * x * x) return d * v;
 
@@ -25902,22 +25695,6 @@ if (typeof window.runSkaiML !== 'function') { // singleton guard to avoid redefi
                      if (g > 1) g = 1;
                      return g;
                    })(),
-    // CHG: Deterministic mode control
-    deterministic: (function(){
-                     var det = gv('deterministic', '');
-                     // Check for boolean-like values
-                     if (det === 'true' || det === '1' || det === 'yes') return true;
-                     if (det === 'false' || det === '0' || det === 'no' || det === '') return false;
-                     return !!det;
-                   })(),
-    seed:         (function(){
-                     var s = gv('seed', '');
-                     if (s !== '') {
-                       var parsed = parseInt(s, 10);
-                       if (isFinite(parsed)) return parsed;
-                     }
-                     return null; // Will be auto-generated if deterministic is true
-                   })(),
     // Default window = entire DB (hist-1), and clamp ONLY to the DB length (no arbitrary max caps)
     windowSize:   (function(){
                      var ui = parseInt(gv('windowSize', String(__DEFAULT_W__)), 10);
@@ -26878,39 +26655,6 @@ try {
     // TS controls (defaults ON)
     var tsOn = (settings && settings.thompsonSampling != null) ? !!settings.thompsonSampling : true;
 
-    // CHG: Initialize deterministic PRNG if enabled
-    (function(){
-      var deterministic = settings && settings.deterministic;
-      var seed = settings && settings.seed;
-      
-      // If deterministic is on but no seed provided, generate one from settings hash
-      if (deterministic && !seed) {
-        var cfg = window.SKAI_CONFIG || window.__le_gameConfig || window.lottoConfig || {};
-        var lottery_id = cfg.lottery_id || cfg.gameId || '';
-        var gameId = cfg.gameId || '';
-        var pick = (settings && settings.pick) || '';
-        var extra = (settings && settings.extra) || '';
-        var windowSize = (settings && settings.windowSize) || '';
-        var weights = {
-          blend: (settings && settings.blend) || 0,
-          temperature: (settings && settings.temperature) || 1,
-          skipGamma: (settings && settings.skipGamma) || 0
-        };
-        var mode = (settings && settings.mode) || '';
-        
-        seed = window.skaiGenerateSeed(lottery_id, gameId, pick, extra, windowSize, weights, mode);
-        if (settings) settings.seed = seed; // Store generated seed
-      }
-      
-      // Initialize deterministic state
-      window.SKAI_DETERMINISTIC.init(deterministic, seed);
-      
-      // Log for debugging
-      if (deterministic && window.console && window.console.log) {
-        console.log('[SKAI Deterministic] Enabled with seed:', seed);
-      }
-    })();
-
     // CHG: Stability (anti-churn) for UX: EMA blend with last scores
     // 0 = no smoothing; 1 = fully locked to previous (not recommended)
     var stability = (settings && settings.stability != null) ? Number(settings.stability) : NaN;
@@ -27252,16 +26996,9 @@ try {
     mainSkipMap[num] = prior;
   }
 
-   // Sort by score desc, then by number asc (deterministic tie-breaking)
+   // Sort by score desc, then by number asc (no bitwise tricks)
   blended.sort(function(a,b){
     if (b.score !== a.score) { return b.score - a.score; }
-    // CHG: Deterministic tie-breaker when scores are equal
-    if (window.SKAI_DETERMINISTIC && window.SKAI_DETERMINISTIC.enabled) {
-      var tieA = window.SKAI_DETERMINISTIC.tieBreaker(a.num);
-      var tieB = window.SKAI_DETERMINISTIC.tieBreaker(b.num);
-      if (tieA !== tieB) return tieA - tieB;
-    }
-    // Default: sort by number ascending
     return a.num - b.num;
   });
 
@@ -27790,17 +27527,8 @@ window.SKAI_runExtra = function runExtraBallML(settings) {
               var y = 1 / (1 + Math.exp(-z));
 
               if (diversityX > 0) {
-                // CHG: Use deterministic random if enabled, otherwise Math.random
-                if (window.SKAI_DETERMINISTIC && window.SKAI_DETERMINISTIC.enabled) {
-                  // Deterministic mode: disable stochastic noise, use epsilon tie-breaker instead
-                  // The tie-breaker is computed deterministically from seed and number
-                  var epsilon = 1e-8; // Small epsilon for tie-breaking
-                  y += epsilon * window.SKAI_DETERMINISTIC.tieBreaker(Math.floor(x * 1000000));
-                } else {
-                  // Non-deterministic mode: use random noise as before
-                  var noise = (Math.random() - 0.5) * 2 * diversityX;
-                  y += noise;
-                }
+                var noise = (Math.random() - 0.5) * 2 * diversityX;
+                y += noise;
               }
 
               if (y < 0) y = 0;
@@ -29987,7 +29715,7 @@ if (typeof window.SKAI_STR !== 'object') {
 
       function waitThenNext(){
         var waitMs = jitter
-          ? interval + Math.floor((window.SKAI_DETERMINISTIC && window.SKAI_DETERMINISTIC.enabled ? window.SKAI_DETERMINISTIC.rand() : Math.random()) * Math.min(60, interval))
+          ? interval + Math.floor(Math.random() * Math.min(60, interval))
           : interval;
 
         return new Promise(function(res){
@@ -30940,7 +30668,7 @@ try {
 
     function ensureOut(el){
       // Ensure the slider has a stable id 
-      if (!el.id) el.id = 'skai-' + (window.SKAI_DETERMINISTIC && window.SKAI_DETERMINISTIC.enabled ? window.SKAI_DETERMINISTIC.randInt(100000, 999999) : Math.random().toString(36).slice(2));
+      if (!el.id) el.id = 'skai-' + Math.random().toString(36).slice(2);
 
       var outId = el.id + '-out';
       var out = document.getElementById(outId);
